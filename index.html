@@ -73,96 +73,136 @@
     text-shadow:0 0 8px rgba(255,46,99,.6);
   }
 
-  /* ---------- LOGIN (desktop/phone one-time setup) ---------- */
+  /* ---------- LOGIN + on-screen keyboard (glasses-friendly) ---------- */
   #login{
     align-items:stretch;
-    justify-content:center;
+    justify-content:flex-start;
     text-align:left;
-    gap:18px;
+    gap:8px;
+    padding:22px 18px 16px;
   }
   #login .login-title{
-    font-size:26px;
+    font-size:18px;
     font-weight:700;
     color:var(--text-primary);
     letter-spacing:-.01em;
   }
   #login .login-sub{
-    font-size:14px;
+    font-size:11px;
     color:var(--text-secondary);
-    line-height:1.45;
-    margin-top:-6px;
+    line-height:1.35;
+    margin-top:-2px;
   }
-  #login label{
+  .login-fields{
     display:flex;
     flex-direction:column;
-    gap:8px;
-    font-size:11px;
+    gap:6px;
+  }
+  .login-field{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    font-size:10px;
     letter-spacing:.12em;
     text-transform:uppercase;
     font-weight:700;
     color:var(--text-secondary);
-  }
-  #login input{
-    background:#0d0d0d;
-    border:1px solid #2a2a2e;
-    border-radius:10px;
-    color:var(--text-primary);
-    font-size:16px;
-    padding:12px 14px;
-    outline:none;
-    font-family:inherit;
-    -webkit-user-select:text;
-    user-select:text;
-  }
-  /* type=password blocks voice/keyboard on many glasses webviews;
-     mask a normal text field instead so dictation still works. */
-  #login input.password-field{
-    -webkit-text-security:disc;
-  }
-  #login input:focus{
-    border-color:var(--accent);
-    box-shadow:0 0 0 1px rgba(255,46,99,.45), var(--glow);
-  }
-  #login .login-actions{
-    display:flex;
-    flex-direction:column;
-    gap:12px;
-    margin-top:6px;
-  }
-  #login .login-btn{
-    appearance:none;
-    border:none;
     cursor:pointer;
-    background:rgba(255,46,99,.18);
-    color:var(--text-primary);
+    padding:6px 8px;
+    border-radius:10px;
+    border:1px solid transparent;
+  }
+  .login-field.active{
+    color:var(--accent);
+    border-color:rgba(255,46,99,.5);
+    background:rgba(255,46,99,.1);
+    box-shadow:0 0 0 1px rgba(255,46,99,.25), var(--glow);
+  }
+  .login-field .login-value{
     font-size:15px;
-    font-weight:700;
-    letter-spacing:.04em;
-    padding:14px 18px;
-    border-radius:12px;
-    box-shadow:0 0 0 1px rgba(255,46,99,.45);
-    font-family:inherit;
+    letter-spacing:0;
+    text-transform:none;
+    font-weight:600;
+    color:var(--text-primary);
+    min-height:1.2em;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
-  #login .login-btn:focus{
-    outline:none;
-    box-shadow:0 0 0 1px rgba(255,46,99,.8), var(--glow);
-    background:rgba(255,46,99,.28);
+  .login-field .login-value.masked{
+    -webkit-text-security:disc;
+    letter-spacing:.12em;
   }
-  #login .login-btn:disabled{
-    opacity:.45;
-    cursor:default;
+  .login-field .login-value.placeholder{
+    color:#4c4c50;
+    font-weight:500;
   }
   #login .login-error{
-    font-size:13px;
+    font-size:12px;
     color:var(--accent);
-    line-height:1.4;
-    min-height:1.2em;
+    line-height:1.3;
+    min-height:1em;
   }
   #login .login-server{
-    font-size:11px;
+    display:none;
+  }
+  .osk{
+    margin-top:auto;
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+  }
+  .osk-row{
+    display:flex;
+    justify-content:center;
+    gap:4px;
+  }
+  .osk-key{
+    flex:1 1 0;
+    min-width:0;
+    height:42px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#121212;
+    border:1px solid #2a2a2e;
+    border-radius:8px;
+    color:var(--text-primary);
+    font-size:15px;
+    font-weight:600;
+    font-family:inherit;
+    cursor:pointer;
+    user-select:none;
+    -webkit-user-select:none;
+    padding:0 2px;
+  }
+  .osk-key.wide{ flex:1.6 1 0; font-size:12px; letter-spacing:.04em; }
+  .osk-key.space{ flex:4 1 0; }
+  .osk-key.go{
+    flex:2 1 0;
+    background:rgba(255,46,99,.18);
+    border-color:rgba(255,46,99,.45);
+    color:var(--text-primary);
+    font-size:12px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+  }
+  .osk-key.focused{
+    background:rgba(255,46,99,.22);
+    border-color:var(--accent);
+    box-shadow:0 0 0 1px rgba(255,46,99,.55), var(--glow);
+    color:#fff;
+  }
+  .osk-key.pressed{
+    background:rgba(255,46,99,.4);
+  }
+  .osk-hint{
+    margin-top:4px;
+    font-size:10px;
     color:#4c4c50;
-    letter-spacing:.04em;
-    word-break:break-all;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    text-align:center;
   }
 
   /* ---------- STATUS (loading / error overlays) ---------- */
@@ -493,22 +533,28 @@
 
   <div class="lens" id="lens" tabindex="0">
 
-    <!-- LOGIN SCREEN (one-time setup on desktop/phone) -->
+    <!-- LOGIN SCREEN + on-screen keyboard for glasses -->
     <section class="screen" id="login">
       <div class="eyebrow">Manet</div>
       <div class="login-title">Sign in to Jellyfin</div>
-      <div class="login-sub">Sign in once. On glasses, speak or type into each field — password uses a voice-friendly field (still masked on screen).</div>
-      <label>Username
-        <input id="loginUser" type="text" autocomplete="username" spellcheck="false" enterkeyhint="next" autocapitalize="none" autocorrect="off">
-      </label>
-      <label>Password
-        <input id="loginPass" class="password-field" type="text" autocomplete="off" spellcheck="false" enterkeyhint="go" autocapitalize="none" autocorrect="off" inputmode="text">
-      </label>
-      <div class="login-actions">
-        <button type="button" class="login-btn" id="loginBtn">Sign in</button>
-        <div class="login-error" id="loginError" aria-live="polite"></div>
-        <div class="login-server" id="loginServer"></div>
+      <div class="login-sub">Use the on-screen keyboard for special characters. Tap a field, then tap keys.</div>
+      <div class="login-fields">
+        <div class="login-field active" id="fieldUser" role="button" data-target="user">
+          Username
+          <div class="login-value placeholder" id="loginUserDisplay">tap to enter</div>
+        </div>
+        <div class="login-field" id="fieldPass" role="button" data-target="pass">
+          Password
+          <div class="login-value masked placeholder" id="loginPassDisplay">tap to enter</div>
+        </div>
       </div>
+      <div class="login-error" id="loginError" aria-live="polite"></div>
+      <div class="login-server" id="loginServer"></div>
+      <div class="osk" id="osk" aria-label="On-screen keyboard"></div>
+      <div class="osk-hint">← → ↑ ↓ move · ⏎ press key · #+= symbols</div>
+      <!-- Hidden real values for auth; filled by OSK -->
+      <input id="loginUser" type="text" autocomplete="username" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;pointer-events:none;height:0;width:0;border:0;padding:0;">
+      <input id="loginPass" type="text" autocomplete="off" tabindex="-1" aria-hidden="true" style="position:absolute;opacity:0;pointer-events:none;height:0;width:0;border:0;padding:0;">
     </section>
 
     <!-- STATUS SCREEN (loading / unreachable / playback hard fail) -->
@@ -664,7 +710,11 @@
   const elLoginError = document.getElementById("loginError");
   const elLoginUser = document.getElementById("loginUser");
   const elLoginPass = document.getElementById("loginPass");
-  const elLoginBtn = document.getElementById("loginBtn");
+  const elLoginUserDisplay = document.getElementById("loginUserDisplay");
+  const elLoginPassDisplay = document.getElementById("loginPassDisplay");
+  const elFieldUser = document.getElementById("fieldUser");
+  const elFieldPass = document.getElementById("fieldPass");
+  const elOsk = document.getElementById("osk");
   const elStatusMsg = document.getElementById("statusMsg");
   const elStatusDetail = document.getElementById("statusDetail");
   const elStatusAction = document.getElementById("statusAction");
@@ -676,6 +726,210 @@
   const LOOP_ICON_ONE =
     '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>' +
     '<text x="12" y="15.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor" font-family="sans-serif">1</text>';
+
+  /** @type {'user'|'pass'} */
+  let loginTarget = "user";
+  /** @type {'letters'|'symbols'} */
+  let kbPage = "letters";
+  let kbShift = false;
+  let kbRow = 0;
+  let kbCol = 0;
+  let loginBusy = false;
+
+  const KB_LETTERS = [
+    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+    ["shift", "z", "x", "c", "v", "b", "n", "m", "back"],
+    ["sym", "space", ".", "@", "go"],
+  ];
+  const KB_SYMBOLS = [
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+    ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"],
+    ["-", "_", "=", "+", "[", "]", "{", "}", "\\", "|"],
+    [";", ":", "'", "\"", "<", ">", ",", "?", "/", "`"],
+    ["abc", "space", "~", "back", "go"],
+  ];
+
+  function kbLayout() {
+    return kbPage === "symbols" ? KB_SYMBOLS : KB_LETTERS;
+  }
+
+  function clampKbFocus() {
+    const layout = kbLayout();
+    if (kbRow < 0) kbRow = 0;
+    if (kbRow >= layout.length) kbRow = layout.length - 1;
+    if (kbCol < 0) kbCol = 0;
+    if (kbCol >= layout[kbRow].length) kbCol = layout[kbRow].length - 1;
+  }
+
+  function keyLabel(id) {
+    if (id === "shift") return kbShift ? "⇧*" : "⇧";
+    if (id === "back") return "⌫";
+    if (id === "space") return "space";
+    if (id === "sym") return "#+=";
+    if (id === "abc") return "abc";
+    if (id === "go") return "Sign in";
+    if (kbPage === "letters" && id.length === 1 && /[a-z]/.test(id)) {
+      return kbShift ? id.toUpperCase() : id;
+    }
+    return id;
+  }
+
+  function keyClass(id) {
+    if (id === "space") return "osk-key space";
+    if (id === "go") return "osk-key go";
+    if (id === "shift" || id === "back" || id === "sym" || id === "abc") return "osk-key wide";
+    return "osk-key";
+  }
+
+  function syncLoginDisplays() {
+    const user = elLoginUser.value;
+    const pass = elLoginPass.value;
+    elLoginUserDisplay.textContent = user || "tap to enter";
+    elLoginUserDisplay.classList.toggle("placeholder", !user);
+    elLoginPassDisplay.textContent = pass || "tap to enter";
+    elLoginPassDisplay.classList.toggle("placeholder", !pass);
+    elFieldUser.classList.toggle("active", loginTarget === "user");
+    elFieldPass.classList.toggle("active", loginTarget === "pass");
+  }
+
+  function setLoginTarget(target) {
+    loginTarget = target;
+    syncLoginDisplays();
+    lens.focus();
+  }
+
+  function activeLoginInput() {
+    return loginTarget === "pass" ? elLoginPass : elLoginUser;
+  }
+
+  function insertLoginChar(ch) {
+    const input = activeLoginInput();
+    input.value += ch;
+    syncLoginDisplays();
+  }
+
+  function backspaceLogin() {
+    const input = activeLoginInput();
+    input.value = input.value.slice(0, -1);
+    syncLoginDisplays();
+  }
+
+  function pressKbKey(id) {
+    if (loginBusy) return;
+    if (id === "shift") {
+      kbShift = !kbShift;
+      renderOsk();
+      return;
+    }
+    if (id === "sym") {
+      kbPage = "symbols";
+      kbShift = false;
+      kbRow = 0;
+      kbCol = 0;
+      renderOsk();
+      return;
+    }
+    if (id === "abc") {
+      kbPage = "letters";
+      kbRow = 0;
+      kbCol = 0;
+      renderOsk();
+      return;
+    }
+    if (id === "back") {
+      backspaceLogin();
+      return;
+    }
+    if (id === "space") {
+      insertLoginChar(" ");
+      return;
+    }
+    if (id === "go") {
+      doLogin();
+      return;
+    }
+    let ch = id;
+    if (kbPage === "letters" && ch.length === 1 && /[a-z]/.test(ch) && kbShift) {
+      ch = ch.toUpperCase();
+      kbShift = false;
+      renderOsk();
+    }
+    insertLoginChar(ch);
+  }
+
+  function renderOsk() {
+    clampKbFocus();
+    const layout = kbLayout();
+    elOsk.innerHTML = "";
+    layout.forEach(function (row, r) {
+      const rowEl = document.createElement("div");
+      rowEl.className = "osk-row";
+      row.forEach(function (id, c) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = keyClass(id) + (r === kbRow && c === kbCol ? " focused" : "");
+        btn.textContent = keyLabel(id);
+        btn.dataset.keyId = id;
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          kbRow = r;
+          kbCol = c;
+          pressKbKey(id);
+          renderOsk();
+          lens.focus();
+        });
+        rowEl.appendChild(btn);
+      });
+      elOsk.appendChild(rowEl);
+    });
+  }
+
+  function handleLoginNav(key) {
+    const layout = kbLayout();
+    clampKbFocus();
+    if (key === "ArrowLeft") {
+      kbCol = (kbCol - 1 + layout[kbRow].length) % layout[kbRow].length;
+      renderOsk();
+      return;
+    }
+    if (key === "ArrowRight") {
+      kbCol = (kbCol + 1) % layout[kbRow].length;
+      renderOsk();
+      return;
+    }
+    if (key === "ArrowUp") {
+      if (kbRow === 0) {
+        // Cycle active field
+        setLoginTarget(loginTarget === "user" ? "pass" : "user");
+        return;
+      }
+      kbRow -= 1;
+      if (kbCol >= layout[kbRow].length) kbCol = layout[kbRow].length - 1;
+      renderOsk();
+      return;
+    }
+    if (key === "ArrowDown") {
+      if (kbRow >= layout.length - 1) return;
+      kbRow += 1;
+      if (kbCol >= layout[kbRow].length) kbCol = layout[kbRow].length - 1;
+      renderOsk();
+      return;
+    }
+    if (key === "Enter") {
+      pressKbKey(layout[kbRow][kbCol]);
+      renderOsk();
+      return;
+    }
+    if (key === "Backspace") {
+      backspaceLogin();
+      return;
+    }
+    // Desktop physical keyboard still works
+    if (key.length === 1 && !loginBusy) {
+      insertLoginChar(key);
+    }
+  }
 
   document.getElementById("loginServer").textContent = JELLYFIN_BASE;
 
@@ -1046,9 +1300,18 @@
   function showLogin(message) {
     clearSession();
     elLoginError.textContent = message || "";
-    elLoginBtn.disabled = false;
+    elLoginUser.value = "";
+    elLoginPass.value = "";
+    loginTarget = "user";
+    kbPage = "letters";
+    kbShift = false;
+    kbRow = 0;
+    kbCol = 0;
+    loginBusy = false;
+    syncLoginDisplays();
+    renderOsk();
     goScreen("login");
-    setTimeout(function () { elLoginUser.focus(); }, 50);
+    setTimeout(function () { lens.focus(); }, 50);
   }
 
   function setArtBackground(el, track) {
@@ -1550,20 +1813,26 @@
     elLoginError.textContent = "";
     if (!user || !pass) {
       elLoginError.textContent = "Enter username and password.";
+      if (!user) setLoginTarget("user");
+      else setLoginTarget("pass");
       return;
     }
-    elLoginBtn.disabled = true;
+    if (loginBusy) return;
+    loginBusy = true;
     elLoginError.textContent = "Signing in…";
+    renderOsk();
     try {
       const s = await authenticate(user, pass);
       saveSession(s);
       elLoginPass.value = "";
+      syncLoginDisplays();
       elLoginError.textContent = "";
       await loadLibraryAndShow();
     } catch (err) {
-      elLoginBtn.disabled = false;
+      loginBusy = false;
       elLoginError.textContent = (err && err.message) || "Sign-in failed.";
-      if (err && err.kind === "auth") elLoginPass.focus();
+      setLoginTarget("pass");
+      renderOsk();
     }
   }
 
@@ -1611,15 +1880,8 @@
     const key = e.key;
 
     if (screen === "login") {
-      if (key === "Enter" && document.activeElement === elLoginUser) {
-        e.preventDefault();
-        elLoginPass.focus();
-        return;
-      }
-      if (key === "Enter" && document.activeElement === elLoginPass) {
-        e.preventDefault();
-        doLogin();
-      }
+      handleLoginNav(key);
+      e.preventDefault();
       return;
     }
 
@@ -1718,24 +1980,10 @@
     }
   });
 
-  elLoginBtn.addEventListener("click", doLogin);
-  elLoginUser.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      elLoginPass.focus();
-    }
-  });
-  elLoginPass.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      doLogin();
-    }
-  });
-  // Ensure glasses taps focus the field (password-type inputs often fail here)
-  elLoginUser.addEventListener("pointerdown", function () { elLoginUser.focus(); });
-  elLoginPass.addEventListener("pointerdown", function () { elLoginPass.focus(); });
-  elLoginUser.addEventListener("click", function () { elLoginUser.focus(); });
-  elLoginPass.addEventListener("click", function () { elLoginPass.focus(); });
+  elFieldUser.addEventListener("click", function () { setLoginTarget("user"); });
+  elFieldPass.addEventListener("click", function () { setLoginTarget("pass"); });
+  elFieldUser.addEventListener("pointerdown", function () { setLoginTarget("user"); });
+  elFieldPass.addEventListener("pointerdown", function () { setLoginTarget("pass"); });
 
   document.getElementById("btnPlay").addEventListener("click", togglePlay);
   document.getElementById("btnNext").addEventListener("click", nextTrack);
