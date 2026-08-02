@@ -1,0 +1,1742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manet — Glasses Player</title>
+<style>
+  :root{
+    --bg:#000000;
+    --accent:#FF2E63;
+    --accent-dim:#7A1730;
+    --text-primary:#FFFFFF;
+    --text-secondary:#8C8C93;
+    --glow: 0 0 14px rgba(255,46,99,0.85), 0 0 2px rgba(255,46,99,0.9);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{
+    height:100%;
+    background:#0a0a0a;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  }
+
+  /* --- Simulator frame: represents the 600x600 additive lens display --- */
+  .rig{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+  }
+  .frame-label{
+    color:#555;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    font-weight:600;
+  }
+  .lens{
+    width:600px;
+    height:600px;
+    background:var(--bg);
+    position:relative;
+    overflow:hidden;
+    border-radius:18px;
+    outline:1px solid #1a1a1a;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+  }
+
+  .screen{
+    position:absolute;
+    inset:0;
+    display:none;
+    flex-direction:column;
+    padding:36px;
+    opacity:0;
+    transform:translateY(10px);
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  .screen.active{
+    display:flex;
+    opacity:1;
+    transform:translateY(0);
+  }
+
+  .eyebrow{
+    font-size:11px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--accent);
+    text-shadow:0 0 8px rgba(255,46,99,.6);
+  }
+
+  /* ---------- LOGIN (desktop/phone one-time setup) ---------- */
+  #login{
+    align-items:stretch;
+    justify-content:center;
+    text-align:left;
+    gap:18px;
+  }
+  #login .login-title{
+    font-size:26px;
+    font-weight:700;
+    color:var(--text-primary);
+    letter-spacing:-.01em;
+  }
+  #login .login-sub{
+    font-size:14px;
+    color:var(--text-secondary);
+    line-height:1.45;
+    margin-top:-6px;
+  }
+  #login label{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--text-secondary);
+  }
+  #login input{
+    background:#0d0d0d;
+    border:1px solid #2a2a2e;
+    border-radius:10px;
+    color:var(--text-primary);
+    font-size:16px;
+    padding:12px 14px;
+    outline:none;
+    font-family:inherit;
+  }
+  #login input:focus{
+    border-color:var(--accent);
+    box-shadow:0 0 0 1px rgba(255,46,99,.45), var(--glow);
+  }
+  #login .login-actions{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    margin-top:6px;
+  }
+  #login .login-btn{
+    appearance:none;
+    border:none;
+    cursor:pointer;
+    background:rgba(255,46,99,.18);
+    color:var(--text-primary);
+    font-size:15px;
+    font-weight:700;
+    letter-spacing:.04em;
+    padding:14px 18px;
+    border-radius:12px;
+    box-shadow:0 0 0 1px rgba(255,46,99,.45);
+    font-family:inherit;
+  }
+  #login .login-btn:focus{
+    outline:none;
+    box-shadow:0 0 0 1px rgba(255,46,99,.8), var(--glow);
+    background:rgba(255,46,99,.28);
+  }
+  #login .login-btn:disabled{
+    opacity:.45;
+    cursor:default;
+  }
+  #login .login-error{
+    font-size:13px;
+    color:var(--accent);
+    line-height:1.4;
+    min-height:1.2em;
+  }
+  #login .login-server{
+    font-size:11px;
+    color:#4c4c50;
+    letter-spacing:.04em;
+    word-break:break-all;
+  }
+
+  /* ---------- STATUS (loading / error overlays) ---------- */
+  #status{
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    gap:14px;
+  }
+  #status .status-msg{
+    font-size:16px;
+    color:var(--text-primary);
+    line-height:1.45;
+    max-width:440px;
+  }
+  #status .status-detail{
+    font-size:13px;
+    color:var(--text-secondary);
+    line-height:1.45;
+    max-width:440px;
+  }
+  #status .status-action{
+    margin-top:10px;
+    font-size:13px;
+    color:var(--accent);
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    font-weight:700;
+    padding:10px 16px;
+    border-radius:10px;
+  }
+  #status .status-action.focused{
+    background:rgba(255,46,99,.14);
+    box-shadow:0 0 0 1px rgba(255,46,99,.5), var(--glow);
+  }
+
+  /* ---------- NOW PLAYING ---------- */
+  #now-playing{
+    align-items:center;
+    justify-content:flex-start;
+    text-align:center;
+    padding-top:34px;
+  }
+  .art-wrap{
+    position:relative;
+    width:300px;
+    height:300px;
+    margin-top:14px;
+  }
+  .ring{
+    position:absolute;
+    inset:-14px;
+  }
+  .ring circle{
+    fill:none;
+    stroke-width:3;
+  }
+  .ring .track{ stroke:rgba(255,255,255,0.08); }
+  .ring .progress{
+    stroke:var(--accent);
+    stroke-linecap:round;
+    filter:drop-shadow(0 0 6px rgba(255,46,99,.9));
+    transition:stroke-dashoffset .1s linear;
+  }
+  .art{
+    width:300px;
+    height:300px;
+    border-radius:20px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:13px;
+    color:rgba(255,255,255,.5);
+    letter-spacing:.08em;
+    background-size:cover;
+    background-position:center;
+    overflow:hidden;
+  }
+  .art.has-image{ color:transparent; }
+
+  .meta{ margin-top:18px; }
+  .title{
+    font-size:24px;
+    font-weight:700;
+    color:var(--text-primary);
+    letter-spacing:-.01em;
+    max-width:480px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .artist{
+    margin-top:6px;
+    font-size:15px;
+    color:var(--text-secondary);
+    font-weight:400;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:480px;
+  }
+
+  .transport{
+    margin-top:18px;
+    display:flex;
+    align-items:center;
+    gap:28px;
+  }
+  .tbtn{
+    width:46px;
+    height:46px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--text-primary);
+    border-radius:50%;
+    transition:box-shadow .15s ease, background .15s ease;
+    cursor:pointer;
+  }
+  .tbtn.play{
+    width:64px;
+    height:64px;
+    background:rgba(255,46,99,.12);
+  }
+  .tbtn svg{ width:100%; height:100%; }
+
+  .mode-row{
+    margin-top:12px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:28px;
+  }
+  .mode-btn{
+    width:42px;
+    height:42px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--text-secondary);
+    border-radius:50%;
+    cursor:pointer;
+    transition:box-shadow .15s ease, background .15s ease, color .15s ease;
+  }
+  .mode-btn svg{ width:22px; height:22px; }
+  .mode-btn.on{
+    color:var(--accent);
+    filter:drop-shadow(0 0 6px rgba(255,46,99,.85));
+  }
+  .mode-btn.focused{
+    color:var(--text-primary);
+    background:rgba(255,46,99,.14);
+    box-shadow:0 0 0 1px rgba(255,46,99,.5), var(--glow);
+  }
+  .mode-btn.on.focused{
+    color:var(--accent);
+  }
+
+  .hint{
+    margin-top:auto;
+    padding-top:18px;
+    font-size:11px;
+    color:#4c4c50;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+
+  .playback-error{
+    margin-top:10px;
+    font-size:12px;
+    color:var(--accent);
+    letter-spacing:.04em;
+    min-height:1.2em;
+  }
+
+  /* ---------- LIBRARY ---------- */
+  #library{ padding-top:34px; }
+  .lib-header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:18px;
+    gap:12px;
+  }
+  .lib-header-left{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    min-width:0;
+    flex:1;
+  }
+  .lib-tabs{
+    display:flex;
+    align-items:center;
+    gap:2px;
+  }
+  .lib-tab{
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--text-secondary);
+    padding:6px 8px;
+    border-radius:8px;
+    cursor:pointer;
+  }
+  .lib-tab.active{
+    color:var(--accent);
+    text-shadow:0 0 8px rgba(255,46,99,.6);
+  }
+  .lib-tab.focused{
+    color:var(--text-primary);
+    background:rgba(255,46,99,.14);
+    box-shadow:0 0 0 1px rgba(255,46,99,.5), var(--glow);
+    text-shadow:none;
+  }
+  .lib-tab.active.focused{
+    color:var(--accent);
+    text-shadow:0 0 8px rgba(255,46,99,.6);
+  }
+  .lib-album-title{
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--accent);
+    text-shadow:0 0 8px rgba(255,46,99,.6);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:280px;
+  }
+  .lib-header-right{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    flex-shrink:0;
+  }
+  .lib-count{
+    font-size:11px;
+    color:var(--text-secondary);
+    letter-spacing:.08em;
+  }
+  .sign-out{
+    font-size:11px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--text-secondary);
+    padding:6px 10px;
+    border-radius:8px;
+    cursor:pointer;
+  }
+  .sign-out.focused{
+    color:var(--text-primary);
+    background:rgba(255,46,99,.14);
+    box-shadow:0 0 0 1px rgba(255,46,99,.5), var(--glow);
+  }
+  .lib-empty{
+    font-size:14px;
+    color:var(--text-secondary);
+    padding:20px 14px;
+  }
+  .lib-list{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    overflow:hidden;
+    flex:1;
+    min-height:0;
+  }
+  .row{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    padding:10px 14px;
+    border-radius:12px;
+    transition:background .15s ease, box-shadow .15s ease;
+  }
+  .row.focused{
+    background:rgba(255,46,99,.14);
+    box-shadow:0 0 0 1px rgba(255,46,99,.5), var(--glow);
+  }
+  .swatch{
+    width:40px;
+    height:40px;
+    border-radius:8px;
+    flex-shrink:0;
+    background-size:cover;
+    background-position:center;
+  }
+  .row-text{ flex:1; min-width:0; }
+  .row-title{
+    font-size:15px;
+    color:var(--text-primary);
+    font-weight:600;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .row-artist{
+    font-size:12px;
+    color:var(--text-secondary);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .row-time{
+    font-size:12px;
+    color:var(--text-secondary);
+    flex-shrink:0;
+  }
+
+  /* ---------- Controls legend (outside lens, for desktop testing) ---------- */
+  .legend{
+    display:flex;
+    gap:22px;
+    color:#5a5a5f;
+    font-size:12px;
+  }
+  .legend b{ color:#ccc; }
+</style>
+</head>
+<body>
+
+<div class="rig">
+  <div class="frame-label">Meta Ray-Ban Display — 600 × 600 simulator</div>
+
+  <div class="lens" id="lens" tabindex="0">
+
+    <!-- LOGIN SCREEN (one-time setup on desktop/phone) -->
+    <section class="screen" id="login">
+      <div class="eyebrow">Manet</div>
+      <div class="login-title">Sign in to Jellyfin</div>
+      <div class="login-sub">Use a normal keyboard on your phone or desktop. Credentials are stored so the glasses can skip this later.</div>
+      <label>Username
+        <input id="loginUser" type="text" autocomplete="username" spellcheck="false">
+      </label>
+      <label>Password
+        <input id="loginPass" type="password" autocomplete="current-password">
+      </label>
+      <div class="login-actions">
+        <button type="button" class="login-btn" id="loginBtn">Sign in</button>
+        <div class="login-error" id="loginError" aria-live="polite"></div>
+        <div class="login-server" id="loginServer"></div>
+      </div>
+    </section>
+
+    <!-- STATUS SCREEN (loading / unreachable / playback hard fail) -->
+    <section class="screen" id="status">
+      <div class="eyebrow" id="statusEyebrow">Status</div>
+      <div class="status-msg" id="statusMsg">Loading…</div>
+      <div class="status-detail" id="statusDetail"></div>
+      <div class="status-action focused" id="statusAction" hidden>Retry</div>
+    </section>
+
+    <!-- NOW PLAYING SCREEN -->
+    <section class="screen" id="now-playing">
+      <div class="eyebrow">Now Playing</div>
+      <div class="art-wrap">
+        <svg class="ring" viewBox="0 0 348 348">
+          <circle class="track" cx="174" cy="174" r="160"></circle>
+          <circle class="progress" id="progressRing" cx="174" cy="174" r="160"
+            stroke-dasharray="1005" stroke-dashoffset="1005"
+            transform="rotate(-90 174 174)"></circle>
+        </svg>
+        <div class="art" id="artNow"></div>
+      </div>
+      <div class="meta">
+        <div class="title" id="titleNow">—</div>
+        <div class="artist" id="artistNow">—</div>
+      </div>
+      <div class="transport">
+        <div class="tbtn" id="btnPrev" role="button" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6L9 12l11 6z"/></svg>
+        </div>
+        <div class="tbtn play" id="btnPlay" role="button" aria-label="Play/Pause">
+          <svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="tbtn" id="btnNext" role="button" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l11 6-11 6z"/></svg>
+        </div>
+      </div>
+      <div class="mode-row" id="modeRow">
+        <div class="mode-btn" id="btnShuffle" role="button" aria-label="Shuffle" title="Shuffle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.83 10.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.63-3.13z"/></svg>
+        </div>
+        <div class="mode-btn" id="btnLoop" role="button" aria-label="Loop" title="Loop">
+          <svg viewBox="0 0 24 24" fill="currentColor" id="loopIcon"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        </div>
+      </div>
+      <div class="playback-error" id="playbackError" aria-live="polite"></div>
+      <div class="hint" id="npHint">↑ Shuffle/Loop &nbsp;·&nbsp; ↓ Library &nbsp;·&nbsp; ← → Skip &nbsp;·&nbsp; ⏎ Play/Pause</div>
+    </section>
+
+    <!-- LIBRARY SCREEN -->
+    <section class="screen" id="library">
+      <div class="lib-header">
+        <div class="lib-header-left">
+          <div class="lib-tabs" id="libTabs">
+            <div class="lib-tab active" id="tabSongs" role="button">Songs</div>
+            <div class="lib-tab" id="tabAlbums" role="button">Albums</div>
+            <div class="lib-tab" id="tabPlaylists" role="button">Playlists</div>
+          </div>
+          <div class="lib-album-title" id="libAlbumTitle" hidden></div>
+        </div>
+        <div class="lib-header-right">
+          <div class="lib-count" id="libCount">—</div>
+          <div class="sign-out" id="btnSignOut" role="button">Sign out</div>
+        </div>
+      </div>
+      <div class="lib-list" id="libList"></div>
+      <div class="hint" id="libHint">↑ ↓ Navigate &nbsp;·&nbsp; ← → Tabs &nbsp;·&nbsp; ⏎ Play &nbsp;·&nbsp; ↑ at top: Back</div>
+    </section>
+
+  </div>
+
+  <div class="legend">
+    <span><b>↑ ↓ ← →</b> D-pad (arrow keys)</span>
+    <span><b>Enter</b> select / activate</span>
+  </div>
+</div>
+
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+(function () {
+  "use strict";
+
+  const JELLYFIN_BASE = "https://home-server.tail708903.ts.net";
+  const AUTH_HEADER =
+    'MediaBrowser Client="Glasses", Device="Meta", DeviceId="manet-glasses", Version="1.0"';
+  const PAGE_SIZE = 200;
+  const VISIBLE_ROWS = 6;
+  const RING_CIRC = 1005;
+  const STORAGE_KEY = "manet.jellyfin.session";
+
+  const FALLBACK_COLORS = [
+    "linear-gradient(135deg,#3a3a3a,#111)",
+    "linear-gradient(135deg,#e0a060,#3a2410)",
+    "linear-gradient(135deg,#6a3fb0,#1b0f33)",
+    "linear-gradient(135deg,#8a5a4a,#241512)",
+    "linear-gradient(135deg,#b06a76,#2b1418)",
+    "linear-gradient(135deg,#4a6a8a,#101820)",
+    "linear-gradient(135deg,#5a7a4a,#121810)",
+  ];
+
+  /** @type {{ accessToken: string, userId: string } | null} */
+  let session = null;
+  let allTracks = [];
+  let albums = [];
+  let playlists = [];
+  /** Tracks inside the open album or playlist. */
+  let collectionTracks = [];
+  /** @type {{id:string,title:string,artist:string,color:string,kind:'album'|'playlist'}|null} */
+  let openCollection = null;
+  /** Playback queue */
+  let tracks = [];
+  /** Unshuffled queue snapshot (for turning shuffle off). */
+  let queueOriginal = [];
+  let currentIndex = 0;
+  let focusedRow = 0;
+  /** @type {'songs'|'albums'|'album'|'playlists'|'playlist'} */
+  let libView = "songs";
+  /** @type {null|'songs'|'albums'|'playlists'|'signout'} */
+  let headerFocus = null;
+  /** @type {null|'shuffle'|'loop'} — Now Playing mode-button focus */
+  let npFocus = null;
+  let shuffleOn = false;
+  /** @type {'off'|'all'|'one'} */
+  let loopMode = "off";
+  let isPlaying = false;
+  let screen = "status";
+  /** @type {'static'|'transcode'|'aac'|null} */
+  let streamMode = null;
+  let statusAction = "retry";
+  let detailLoading = false;
+
+  const elAudio = document.getElementById("audio");
+  const elArt = document.getElementById("artNow");
+  const elTitle = document.getElementById("titleNow");
+  const elArtist = document.getElementById("artistNow");
+  const elRing = document.getElementById("progressRing");
+  const elPlayIcon = document.getElementById("playIcon");
+  const elLibList = document.getElementById("libList");
+  const elLibCount = document.getElementById("libCount");
+  const elLibHint = document.getElementById("libHint");
+  const elLibTabs = document.getElementById("libTabs");
+  const elLibAlbumTitle = document.getElementById("libAlbumTitle");
+  const elTabSongs = document.getElementById("tabSongs");
+  const elTabAlbums = document.getElementById("tabAlbums");
+  const elTabPlaylists = document.getElementById("tabPlaylists");
+  const elPlaybackError = document.getElementById("playbackError");
+  const elNpHint = document.getElementById("npHint");
+  const elBtnShuffle = document.getElementById("btnShuffle");
+  const elBtnLoop = document.getElementById("btnLoop");
+  const elLoopIcon = document.getElementById("loopIcon");
+  const elSignOut = document.getElementById("btnSignOut");
+  const elLoginError = document.getElementById("loginError");
+  const elLoginUser = document.getElementById("loginUser");
+  const elLoginPass = document.getElementById("loginPass");
+  const elLoginBtn = document.getElementById("loginBtn");
+  const elStatusMsg = document.getElementById("statusMsg");
+  const elStatusDetail = document.getElementById("statusDetail");
+  const elStatusAction = document.getElementById("statusAction");
+  const elStatusEyebrow = document.getElementById("statusEyebrow");
+  const lens = document.getElementById("lens");
+
+  const LOOP_ICON_ALL =
+    '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>';
+  const LOOP_ICON_ONE =
+    '<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>' +
+    '<text x="12" y="15.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor" font-family="sans-serif">1</text>';
+
+  document.getElementById("loginServer").textContent = JELLYFIN_BASE;
+
+  function fmtTime(s) {
+    if (!Number.isFinite(s) || s < 0) return "0:00";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return m + ":" + String(sec).padStart(2, "0");
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function colorForId(id) {
+    let h = 0;
+    const s = String(id || "");
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return FALLBACK_COLORS[h % FALLBACK_COLORS.length];
+  }
+
+  function imageUrl(itemId) {
+    if (!session || !itemId) return "";
+    return (
+      JELLYFIN_BASE +
+      "/Items/" +
+      encodeURIComponent(itemId) +
+      "/Images/Primary?api_key=" +
+      encodeURIComponent(session.accessToken) +
+      "&fillWidth=640&fillHeight=640&quality=90"
+    );
+  }
+
+  function streamUrl(itemId, mode) {
+    const base =
+      JELLYFIN_BASE +
+      "/Audio/" +
+      encodeURIComponent(itemId) +
+      "/stream?api_key=" +
+      encodeURIComponent(session.accessToken);
+    if (mode === "static") return base + "&static=true";
+    if (mode === "aac") return base + "&AudioCodec=aac";
+    return base;
+  }
+
+  function mapItem(item) {
+    let artist = item.AlbumArtist || "";
+    if (!artist && Array.isArray(item.AlbumArtists) && item.AlbumArtists.length) {
+      artist = item.AlbumArtists[0].Name || "";
+    }
+    if (!artist) artist = item.Artists && item.Artists[0] ? item.Artists[0] : "Unknown Artist";
+    const ticks = Number(item.RunTimeTicks) || 0;
+    return {
+      id: item.Id,
+      title: item.Name || "Untitled",
+      artist: artist,
+      album: item.Album || "",
+      albumId: item.AlbumId || item.ParentId || "",
+      duration: ticks / 10000000,
+      color: colorForId(item.Id),
+    };
+  }
+
+  function mapAlbum(item) {
+    let artist = item.AlbumArtist || "";
+    if (!artist && Array.isArray(item.AlbumArtists) && item.AlbumArtists.length) {
+      artist = item.AlbumArtists[0].Name || "";
+    }
+    if (!artist) artist = "Unknown Artist";
+    const childCount = Number(item.ChildCount);
+    const ticks = Number(item.RunTimeTicks) || 0;
+    return {
+      id: item.Id,
+      title: item.Name || "Untitled Album",
+      artist: artist,
+      trackCount: Number.isFinite(childCount) ? childCount : 0,
+      duration: ticks / 10000000,
+      color: colorForId(item.Id),
+      kind: "album",
+    };
+  }
+
+  function mapPlaylist(item) {
+    const childCount = Number(item.ChildCount);
+    const ticks = Number(item.RunTimeTicks) || 0;
+    return {
+      id: item.Id,
+      title: item.Name || "Untitled Playlist",
+      artist: "Playlist",
+      trackCount: Number.isFinite(childCount) ? childCount : 0,
+      duration: ticks / 10000000,
+      color: colorForId(item.Id),
+      kind: "playlist",
+    };
+  }
+
+  function loadSession() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.accessToken && parsed.userId) return parsed;
+    } catch (_) {}
+    return null;
+  }
+
+  function saveSession(s) {
+    session = s;
+    try {
+      if (s) localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch (_) {}
+  }
+
+  function clearSession() {
+    saveSession(null);
+    allTracks = [];
+    albums = [];
+    playlists = [];
+    collectionTracks = [];
+    openCollection = null;
+    tracks = [];
+    queueOriginal = [];
+    currentIndex = 0;
+    focusedRow = 0;
+    libView = "songs";
+    headerFocus = null;
+    npFocus = null;
+    shuffleOn = false;
+    loopMode = "off";
+    isPlaying = false;
+    streamMode = null;
+    detailLoading = false;
+    elAudio.pause();
+    elAudio.removeAttribute("src");
+    elAudio.load();
+  }
+
+  class ApiError extends Error {
+    constructor(message, { status = 0, kind = "unknown" } = {}) {
+      super(message);
+      this.status = status;
+      this.kind = kind;
+    }
+  }
+
+  async function apiFetch(path, options = {}) {
+    const headers = Object.assign({}, options.headers || {});
+    if (session && session.accessToken) {
+      headers["X-Emby-Token"] = session.accessToken;
+    }
+    let res;
+    try {
+      res = await fetch(JELLYFIN_BASE + path, Object.assign({}, options, { headers }));
+    } catch (err) {
+      throw new ApiError(
+        "Can't reach Jellyfin. If the hostname was recently changed, Tailscale Funnel DNS can take ~20 minutes to propagate — wait and retry.",
+        { kind: "network" }
+      );
+    }
+    if (res.status === 401) {
+      throw new ApiError("Session expired. Sign in again.", { status: 401, kind: "auth" });
+    }
+    if (!res.ok) {
+      let detail = "";
+      try { detail = await res.text(); } catch (_) {}
+      throw new ApiError(
+        "Jellyfin returned " + res.status + (detail ? ": " + detail.slice(0, 120) : ""),
+        { status: res.status, kind: "http" }
+      );
+    }
+    if (res.status === 204) return null;
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) return res.json();
+    return res.text();
+  }
+
+  async function authenticate(username, password) {
+    const body = JSON.stringify({ Username: username, Pw: password });
+    let res;
+    try {
+      res = await fetch(JELLYFIN_BASE + "/Users/AuthenticateByName", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Emby-Authorization": AUTH_HEADER,
+        },
+        body,
+      });
+    } catch (_) {
+      throw new ApiError(
+        "Can't reach Jellyfin at " + JELLYFIN_BASE + ". Check the public Funnel URL, or wait ~20 min if DNS was just updated.",
+        { kind: "network" }
+      );
+    }
+    if (res.status === 401) {
+      throw new ApiError("Wrong username or password.", { status: 401, kind: "auth" });
+    }
+    if (!res.ok) {
+      throw new ApiError("Sign-in failed (" + res.status + ").", { status: res.status, kind: "http" });
+    }
+    const data = await res.json();
+    const token = data.AccessToken;
+    const userId = (data.User && data.User.Id) || data.UserId;
+    if (!token || !userId) {
+      throw new ApiError("Unexpected auth response from Jellyfin.", { kind: "http" });
+    }
+    return { accessToken: token, userId: userId };
+  }
+
+  async function fetchPagedItems(includeItemTypes, fields, mapFn) {
+    const all = [];
+    let start = 0;
+    let total = Infinity;
+    while (start < total) {
+      const qs =
+        "IncludeItemTypes=" + encodeURIComponent(includeItemTypes) +
+        "&Recursive=true" +
+        "&SortBy=DateCreated" +
+        "&SortOrder=Descending" +
+        "&Fields=" + encodeURIComponent(fields) +
+        "&Limit=" + PAGE_SIZE +
+        "&StartIndex=" + start;
+      const data = await apiFetch(
+        "/Users/" + encodeURIComponent(session.userId) + "/Items?" + qs
+      );
+      total = Number(data.TotalRecordCount) || 0;
+      const items = Array.isArray(data.Items) ? data.Items : [];
+      if (!items.length) break;
+      for (let i = 0; i < items.length; i++) all.push(mapFn(items[i]));
+      start += items.length;
+      if (items.length < PAGE_SIZE) break;
+    }
+    return all;
+  }
+
+  async function fetchAllAudio() {
+    return fetchPagedItems(
+      "Audio",
+      "AlbumArtist,AlbumArtists,Album,AlbumId,RunTimeTicks,PrimaryImageTag",
+      mapItem
+    );
+  }
+
+  async function fetchAllAlbums() {
+    return fetchPagedItems(
+      "MusicAlbum",
+      "AlbumArtist,AlbumArtists,ChildCount,RunTimeTicks,PrimaryImageTag",
+      mapAlbum
+    );
+  }
+
+  async function fetchAllPlaylists() {
+    return fetchPagedItems(
+      "Playlist",
+      "ChildCount,RunTimeTicks,PrimaryImageTag",
+      mapPlaylist
+    );
+  }
+
+  async function fetchAlbumTracks(albumId) {
+    const qs =
+      "ParentId=" + encodeURIComponent(albumId) +
+      "&IncludeItemTypes=Audio" +
+      "&Recursive=true" +
+      "&SortBy=ParentIndexNumber,IndexNumber,SortName" +
+      "&SortOrder=Ascending" +
+      "&Fields=AlbumArtist,AlbumArtists,Album,AlbumId,RunTimeTicks,PrimaryImageTag" +
+      "&Limit=500";
+    const data = await apiFetch(
+      "/Users/" + encodeURIComponent(session.userId) + "/Items?" + qs
+    );
+    const items = Array.isArray(data.Items) ? data.Items : [];
+    return items.map(mapItem);
+  }
+
+  async function fetchPlaylistTracks(playlistId) {
+    const all = [];
+    let start = 0;
+    let total = Infinity;
+    while (start < total) {
+      const qs =
+        "UserId=" + encodeURIComponent(session.userId) +
+        "&Fields=AlbumArtist,AlbumArtists,Album,AlbumId,RunTimeTicks,PrimaryImageTag,MediaType" +
+        "&Limit=" + PAGE_SIZE +
+        "&StartIndex=" + start;
+      const data = await apiFetch(
+        "/Playlists/" + encodeURIComponent(playlistId) + "/Items?" + qs
+      );
+      total = Number(data.TotalRecordCount) || 0;
+      const items = Array.isArray(data.Items) ? data.Items : [];
+      if (!items.length) break;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.MediaType && item.MediaType !== "Audio") continue;
+        if (item.Type && item.Type !== "Audio") continue;
+        all.push(mapItem(item));
+      }
+      start += items.length;
+      if (items.length < PAGE_SIZE) break;
+    }
+    return all;
+  }
+
+  function browseList() {
+    if (libView === "albums") return albums;
+    if (libView === "album" || libView === "playlist") return collectionTracks;
+    if (libView === "playlists") return playlists;
+    return allTracks;
+  }
+
+  function isDetailView() {
+    return libView === "album" || libView === "playlist";
+  }
+
+  function goScreen(name) {
+    screen = name;
+    ["login", "status", "now-playing", "library"].forEach(function (id) {
+      document.getElementById(id).classList.toggle("active", id === name);
+    });
+    if (name === "now-playing") {
+      npFocus = null;
+      renderNowPlaying();
+    }
+    if (name === "library") {
+      headerFocus = null;
+      npFocus = null;
+      if (isDetailView() && openCollection) {
+        focusedRow = Math.min(focusedRow, Math.max(collectionTracks.length - 1, 0));
+      } else if (libView === "albums") {
+        focusedRow = Math.min(Math.max(focusedRow, 0), Math.max(albums.length - 1, 0));
+      } else if (libView === "playlists") {
+        focusedRow = Math.min(Math.max(focusedRow, 0), Math.max(playlists.length - 1, 0));
+      } else if (libView === "songs") {
+        const playing = tracks[currentIndex];
+        const idx = playing
+          ? allTracks.findIndex(function (t) { return t.id === playing.id; })
+          : -1;
+        focusedRow = idx >= 0 ? idx : 0;
+      } else {
+        libView = "songs";
+        focusedRow = 0;
+      }
+      renderLibrary();
+    }
+    if (name !== "login") lens.focus();
+  }
+
+  function showStatus(eyebrow, msg, detail, actionLabel) {
+    elStatusEyebrow.textContent = eyebrow;
+    elStatusMsg.textContent = msg;
+    elStatusDetail.textContent = detail || "";
+    if (actionLabel) {
+      elStatusAction.hidden = false;
+      elStatusAction.textContent = actionLabel;
+      elStatusAction.classList.add("focused");
+      statusAction = actionLabel.toLowerCase().includes("sign") ? "signin" : "retry";
+    } else {
+      elStatusAction.hidden = true;
+    }
+    goScreen("status");
+  }
+
+  function showLogin(message) {
+    clearSession();
+    elLoginError.textContent = message || "";
+    elLoginBtn.disabled = false;
+    goScreen("login");
+    setTimeout(function () { elLoginUser.focus(); }, 50);
+  }
+
+  function setArtBackground(el, track) {
+    el.style.background = track.color;
+    el.style.backgroundImage = "";
+    el.classList.remove("has-image");
+    el.textContent = (track.album || track.title || "").toUpperCase();
+    const artId = track.albumId || track.id;
+    const url = imageUrl(artId);
+    if (!url) return;
+
+    function apply(urlToUse) {
+      const img = new Image();
+      img.onload = function () {
+        el.style.backgroundImage = "url('" + urlToUse + "')";
+        el.style.backgroundColor = "#000";
+        el.classList.add("has-image");
+        el.textContent = "";
+      };
+      img.onerror = function () {
+        if (urlToUse === url && artId !== track.id) {
+          const fb = imageUrl(track.id);
+          if (fb) { apply(fb); return; }
+        }
+        el.style.backgroundImage = "";
+        el.style.background = track.color;
+        el.classList.remove("has-image");
+        el.textContent = (track.album || track.title || "").toUpperCase();
+      };
+      img.src = urlToUse;
+    }
+    apply(url);
+  }
+
+  function renderModeButtons() {
+    elBtnShuffle.classList.toggle("on", shuffleOn);
+    elBtnShuffle.classList.toggle("focused", npFocus === "shuffle");
+    elBtnLoop.classList.toggle("on", loopMode !== "off");
+    elBtnLoop.classList.toggle("focused", npFocus === "loop");
+    elLoopIcon.innerHTML = loopMode === "one" ? LOOP_ICON_ONE : LOOP_ICON_ALL;
+    if (npFocus) {
+      elNpHint.textContent =
+        "← → Select  ·  ⏎ Toggle  ·  ↓ Back  ·  Shuffle" +
+        (shuffleOn ? " On" : " Off") +
+        "  ·  Loop " +
+        (loopMode === "off" ? "Off" : loopMode === "all" ? "All" : "One");
+    } else {
+      elNpHint.textContent =
+        "↑ Shuffle/Loop  ·  ↓ Library  ·  ← → Skip  ·  ⏎ Play/Pause";
+    }
+  }
+
+  function renderNowPlaying() {
+    if (!tracks.length) {
+      elArt.style.background = FALLBACK_COLORS[0];
+      elArt.style.backgroundImage = "";
+      elArt.textContent = "";
+      elArt.classList.remove("has-image");
+      elTitle.textContent = "No tracks";
+      elArtist.textContent = "Library is empty";
+      elPlayIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      elRing.style.strokeDashoffset = RING_CIRC;
+      renderModeButtons();
+      return;
+    }
+    const t = tracks[currentIndex];
+    setArtBackground(elArt, t);
+    elTitle.textContent = t.title;
+    elArtist.textContent = t.artist;
+    elPlayIcon.innerHTML = isPlaying
+      ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>'
+      : '<path d="M8 5v14l11-7z"/>';
+    updateRing();
+    renderModeButtons();
+  }
+
+  function updateRing() {
+    const dur = elAudio.duration;
+    const cur = elAudio.currentTime;
+    if (!Number.isFinite(dur) || dur <= 0) {
+      elRing.style.strokeDashoffset = RING_CIRC;
+      return;
+    }
+    const pct = Math.min(Math.max(cur / dur, 0), 1);
+    elRing.style.strokeDashoffset = RING_CIRC * (1 - pct);
+  }
+
+  function renderLibraryHeader() {
+    const inDetail = isDetailView();
+    elLibTabs.hidden = inDetail;
+    elLibAlbumTitle.hidden = !inDetail;
+    if (inDetail && openCollection) elLibAlbumTitle.textContent = openCollection.title;
+
+    elTabSongs.classList.toggle("active", libView === "songs");
+    elTabAlbums.classList.toggle("active", libView === "albums");
+    elTabPlaylists.classList.toggle("active", libView === "playlists");
+    elTabSongs.classList.toggle("focused", headerFocus === "songs");
+    elTabAlbums.classList.toggle("focused", headerFocus === "albums");
+    elTabPlaylists.classList.toggle("focused", headerFocus === "playlists");
+    elSignOut.classList.toggle("focused", headerFocus === "signout");
+
+    if (inDetail) {
+      const backLabel = openCollection && openCollection.kind === "playlist" ? "Playlists" : "Albums";
+      elLibHint.textContent =
+        "↑ ↓ Navigate  ·  ⏎ Play  ·  ↑ at top: " + backLabel + "  ·  ← Sign out";
+    } else {
+      elLibHint.textContent =
+        "↑ ↓ Navigate  ·  ← → Tabs  ·  ⏎ Open/Play  ·  ↑ at top: Back";
+    }
+  }
+
+  function renderLibrary() {
+    renderLibraryHeader();
+    elLibList.innerHTML = "";
+
+    if (detailLoading) {
+      elLibCount.textContent = "…";
+      const empty = document.createElement("div");
+      empty.className = "lib-empty";
+      empty.textContent =
+        openCollection && openCollection.kind === "playlist"
+          ? "Loading playlist…"
+          : "Loading album…";
+      elLibList.appendChild(empty);
+      return;
+    }
+
+    const list = browseList();
+    if (!list.length) {
+      elLibCount.textContent = "0";
+      const empty = document.createElement("div");
+      empty.className = "lib-empty";
+      empty.textContent =
+        libView === "albums"
+          ? "No albums found"
+          : libView === "playlists"
+            ? "No playlists found"
+            : libView === "album"
+              ? "No tracks in this album"
+              : libView === "playlist"
+                ? "No tracks in this playlist"
+                : "No songs found";
+      elLibList.appendChild(empty);
+      return;
+    }
+
+    const maxStart = Math.max(0, list.length - VISIBLE_ROWS);
+    let start = Math.max(0, focusedRow - Math.floor(VISIBLE_ROWS / 2));
+    if (start > maxStart) start = maxStart;
+    const end = Math.min(list.length, start + VISIBLE_ROWS);
+    const listFocused = headerFocus === null;
+
+    for (let i = start; i < end; i++) {
+      const item = list[i];
+      const row = document.createElement("div");
+      row.className = "row" + (i === focusedRow && listFocused ? " focused" : "");
+      const thumb = imageUrl(item.id);
+      const swatchBg = thumb
+        ? "background-image:url('" + escapeHtml(thumb) + "')," + escapeHtml(item.color)
+        : "background-image:" + escapeHtml(item.color);
+      const metaRight =
+        libView === "albums" || libView === "playlists"
+          ? (item.trackCount ? item.trackCount + " tr" : "—")
+          : fmtTime(item.duration);
+      row.innerHTML =
+        '<div class="swatch" style="' + swatchBg + '"></div>' +
+        '<div class="row-text">' +
+        '<div class="row-title">' + escapeHtml(item.title) + "</div>" +
+        '<div class="row-artist">' + escapeHtml(item.artist) + "</div>" +
+        "</div>" +
+        '<div class="row-time">' + escapeHtml(metaRight) + "</div>";
+      elLibList.appendChild(row);
+    }
+
+    elLibCount.textContent = (focusedRow + 1) + " / " + list.length;
+  }
+
+  function setLibView(view) {
+    libView = view;
+    headerFocus = null;
+    openCollection = null;
+    collectionTracks = [];
+    detailLoading = false;
+    focusedRow = 0;
+    renderLibrary();
+  }
+
+  async function openCollectionByIndex(kind, index) {
+    const source = kind === "playlist" ? playlists : albums;
+    const item = source[index];
+    if (!item) return;
+    openCollection = item;
+    libView = kind === "playlist" ? "playlist" : "album";
+    headerFocus = null;
+    focusedRow = 0;
+    detailLoading = true;
+    collectionTracks = [];
+    renderLibrary();
+    try {
+      collectionTracks =
+        kind === "playlist"
+          ? await fetchPlaylistTracks(item.id)
+          : await fetchAlbumTracks(item.id);
+      detailLoading = false;
+      focusedRow = 0;
+      renderLibrary();
+    } catch (err) {
+      detailLoading = false;
+      if (err && err.kind === "auth") {
+        handleApiFailure(err, "library");
+        return;
+      }
+      libView = kind === "playlist" ? "playlists" : "albums";
+      openCollection = null;
+      collectionTracks = [];
+      focusedRow = index;
+      renderLibrary();
+      const empty = document.createElement("div");
+      empty.className = "lib-empty";
+      empty.textContent =
+        (err && err.message) ||
+        (kind === "playlist" ? "Couldn't load playlist." : "Couldn't load album.");
+      elLibList.innerHTML = "";
+      elLibList.appendChild(empty);
+    }
+  }
+
+  function setPlaybackError(msg) {
+    elPlaybackError.textContent = msg || "";
+  }
+
+  function shuffleArray(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = a[i];
+      a[i] = a[j];
+      a[j] = tmp;
+    }
+    return a;
+  }
+
+  function applyShuffleKeepingCurrent() {
+    if (!tracks.length) return;
+    const current = tracks[currentIndex];
+    const rest = [];
+    for (let i = 0; i < tracks.length; i++) {
+      if (i !== currentIndex) rest.push(tracks[i]);
+    }
+    tracks = [current].concat(shuffleArray(rest));
+    currentIndex = 0;
+  }
+
+  function toggleShuffle() {
+    if (!tracks.length) return;
+    if (!shuffleOn) {
+      if (!queueOriginal.length) queueOriginal = tracks.slice();
+      shuffleOn = true;
+      applyShuffleKeepingCurrent();
+    } else {
+      shuffleOn = false;
+      const id = tracks[currentIndex] && tracks[currentIndex].id;
+      if (queueOriginal.length) {
+        tracks = queueOriginal.slice();
+        const idx = tracks.findIndex(function (t) { return t.id === id; });
+        currentIndex = idx >= 0 ? idx : 0;
+      }
+    }
+    renderNowPlaying();
+  }
+
+  function cycleLoop() {
+    loopMode = loopMode === "off" ? "all" : loopMode === "all" ? "one" : "off";
+    renderModeButtons();
+  }
+
+  function loadTrackSource(mode) {
+    const t = tracks[currentIndex];
+    if (!t || !session) return;
+    streamMode = mode;
+    elAudio.src = streamUrl(t.id, mode);
+    elAudio.load();
+  }
+
+  function playCurrent() {
+    if (!tracks.length) return;
+    setPlaybackError("");
+    const t = tracks[currentIndex];
+    const needReload =
+      !elAudio.src ||
+      streamMode === null ||
+      !elAudio.src.includes(encodeURIComponent(t.id));
+
+    if (needReload) loadTrackSource("static");
+
+    const p = elAudio.play();
+    if (p && typeof p.then === "function") {
+      p.then(function () {
+        isPlaying = true;
+        renderNowPlaying();
+      }).catch(function () {
+        isPlaying = false;
+        renderNowPlaying();
+      });
+    } else {
+      isPlaying = true;
+      renderNowPlaying();
+    }
+  }
+
+  function pause() {
+    isPlaying = false;
+    elAudio.pause();
+    renderNowPlaying();
+  }
+
+  function togglePlay() {
+    if (!tracks.length) return;
+    if (isPlaying) pause();
+    else playCurrent();
+  }
+
+  function goToIndex(index, autoplay) {
+    if (!tracks.length) return;
+    currentIndex = index;
+    streamMode = null;
+    setPlaybackError("");
+    renderNowPlaying();
+    loadTrackSource("static");
+    if (autoplay) {
+      isPlaying = true;
+      playCurrent();
+    } else if (isPlaying) {
+      playCurrent();
+    }
+  }
+
+  function nextTrack() {
+    if (!tracks.length) return;
+    goToIndex((currentIndex + 1) % tracks.length, false);
+  }
+
+  function prevTrack() {
+    if (!tracks.length) return;
+    goToIndex((currentIndex - 1 + tracks.length) % tracks.length, false);
+  }
+
+  function onTrackEnded() {
+    if (!tracks.length) return;
+    if (loopMode === "one") {
+      try { elAudio.currentTime = 0; } catch (_) {}
+      isPlaying = true;
+      const p = elAudio.play();
+      if (p && typeof p.then === "function") {
+        p.catch(function () {
+          streamMode = null;
+          loadTrackSource("static");
+          playCurrent();
+        });
+      }
+      renderNowPlaying();
+      return;
+    }
+    const atEnd = currentIndex >= tracks.length - 1;
+    if (atEnd && loopMode === "off") {
+      isPlaying = false;
+      updateRing();
+      renderNowPlaying();
+      return;
+    }
+    goToIndex((currentIndex + 1) % tracks.length, true);
+  }
+
+  function startPlaybackQueue(queue, index) {
+    if (!queue.length) return;
+    queueOriginal = queue.slice();
+    tracks = queue.slice();
+    currentIndex = Math.min(Math.max(index, 0), tracks.length - 1);
+    streamMode = null;
+    setPlaybackError("");
+    if (shuffleOn) applyShuffleKeepingCurrent();
+    goScreen("now-playing");
+    renderNowPlaying();
+    loadTrackSource("static");
+    isPlaying = true;
+    playCurrent();
+  }
+
+  function playSelected() {
+    if (libView === "albums") {
+      openCollectionByIndex("album", focusedRow);
+      return;
+    }
+    if (libView === "playlists") {
+      openCollectionByIndex("playlist", focusedRow);
+      return;
+    }
+    const list = browseList();
+    if (!list.length) return;
+    if (libView === "album" || libView === "playlist") {
+      startPlaybackQueue(collectionTracks, focusedRow);
+    } else {
+      startPlaybackQueue(allTracks, focusedRow);
+    }
+  }
+
+  function advanceStreamFallback() {
+    if (streamMode === "static") {
+      setPlaybackError("Original file unsupported — trying transcode…");
+      loadTrackSource("transcode");
+      elAudio.play().catch(function () {});
+      return true;
+    }
+    if (streamMode === "transcode") {
+      setPlaybackError("Trying AAC transcode…");
+      loadTrackSource("aac");
+      elAudio.play().catch(function () {});
+      return true;
+    }
+    return false;
+  }
+
+  elAudio.addEventListener("timeupdate", updateRing);
+  elAudio.addEventListener("loadedmetadata", updateRing);
+  elAudio.addEventListener("play", function () {
+    isPlaying = true;
+    renderNowPlaying();
+  });
+  elAudio.addEventListener("pause", function () {
+    if (!elAudio.ended) {
+      isPlaying = false;
+      renderNowPlaying();
+    }
+  });
+  elAudio.addEventListener("ended", function () {
+    onTrackEnded();
+  });
+  elAudio.addEventListener("error", function () {
+    if (!tracks.length || !session) return;
+    if (advanceStreamFallback()) return;
+    isPlaying = false;
+    renderNowPlaying();
+    setPlaybackError("Can't play this file (codec unsupported or stream failed).");
+  });
+
+  async function loadLibraryAndShow() {
+    showStatus("Library", "Loading music…", "Fetching songs, albums, and playlists from Jellyfin", null);
+    try {
+      const results = await Promise.all([
+        fetchAllAudio(),
+        fetchAllAlbums(),
+        fetchAllPlaylists(),
+      ]);
+      allTracks = results[0];
+      albums = results[1];
+      playlists = results[2];
+      if (!allTracks.length && !albums.length && !playlists.length) {
+        showStatus(
+          "Library",
+          "No music found",
+          "Your Jellyfin library returned 0 songs, albums, and playlists.",
+          "Retry"
+        );
+        return;
+      }
+      tracks = allTracks.slice();
+      queueOriginal = allTracks.slice();
+      currentIndex = 0;
+      focusedRow = 0;
+      npFocus = null;
+      libView = allTracks.length ? "songs" : albums.length ? "albums" : "playlists";
+      streamMode = null;
+      if (shuffleOn && tracks.length) applyShuffleKeepingCurrent();
+      goScreen("now-playing");
+      renderNowPlaying();
+      if (tracks.length) loadTrackSource("static");
+    } catch (err) {
+      handleApiFailure(err, "library");
+    }
+  }
+
+  function handleApiFailure(err, context) {
+    if (err && err.kind === "auth") {
+      showLogin(err.message || "Session expired. Sign in again.");
+      return;
+    }
+    const detail = (err && err.message) || "Unknown error talking to Jellyfin.";
+    showStatus(
+      context === "library" ? "Library" : "Error",
+      "Can't reach server",
+      detail,
+      "Retry"
+    );
+  }
+
+  async function doLogin() {
+    const user = elLoginUser.value.trim();
+    const pass = elLoginPass.value;
+    elLoginError.textContent = "";
+    if (!user || !pass) {
+      elLoginError.textContent = "Enter username and password.";
+      return;
+    }
+    elLoginBtn.disabled = true;
+    elLoginError.textContent = "Signing in…";
+    try {
+      const s = await authenticate(user, pass);
+      saveSession(s);
+      elLoginPass.value = "";
+      elLoginError.textContent = "";
+      await loadLibraryAndShow();
+    } catch (err) {
+      elLoginBtn.disabled = false;
+      elLoginError.textContent = (err && err.message) || "Sign-in failed.";
+      if (err && err.kind === "auth") elLoginPass.focus();
+    }
+  }
+
+  function signOut() {
+    pause();
+    showLogin("Signed out.");
+  }
+
+  async function boot() {
+    session = loadSession();
+    if (!session) {
+      showLogin("");
+      return;
+    }
+    await loadLibraryAndShow();
+  }
+
+  function headerOrder() {
+    if (isDetailView()) return ["signout"];
+    return ["songs", "albums", "playlists", "signout"];
+  }
+
+  function activateHeader() {
+    if (headerFocus === "signout") signOut();
+    else if (headerFocus === "songs") setLibView("songs");
+    else if (headerFocus === "albums") setLibView("albums");
+    else if (headerFocus === "playlists") setLibView("playlists");
+  }
+
+  function defaultHeaderFocus() {
+    if (isDetailView()) return "signout";
+    if (libView === "albums") return "albums";
+    if (libView === "playlists") return "playlists";
+    return "songs";
+  }
+
+  function onStatusActivate() {
+    if (elStatusAction.hidden) return;
+    if (statusAction === "signin") showLogin("");
+    else if (session) loadLibraryAndShow();
+    else showLogin("");
+  }
+
+  lens.addEventListener("keydown", function (e) {
+    const key = e.key;
+
+    if (screen === "login") {
+      if (key === "Enter" && document.activeElement === elLoginPass) {
+        e.preventDefault();
+        doLogin();
+      }
+      return;
+    }
+
+    if (screen === "status") {
+      if (key === "Enter") onStatusActivate();
+      e.preventDefault();
+      return;
+    }
+
+    if (screen === "now-playing") {
+      if (npFocus) {
+        if (key === "ArrowDown") {
+          npFocus = null;
+          renderModeButtons();
+        } else if (key === "ArrowLeft" || key === "ArrowRight") {
+          npFocus = npFocus === "shuffle" ? "loop" : "shuffle";
+          renderModeButtons();
+        } else if (key === "Enter") {
+          if (npFocus === "shuffle") toggleShuffle();
+          else cycleLoop();
+        }
+        e.preventDefault();
+        return;
+      }
+      if (key === "ArrowDown") goScreen("library");
+      else if (key === "ArrowUp") {
+        npFocus = "shuffle";
+        renderModeButtons();
+      } else if (key === "ArrowLeft") prevTrack();
+      else if (key === "ArrowRight") nextTrack();
+      else if (key === "Enter") togglePlay();
+      e.preventDefault();
+      return;
+    }
+
+    if (screen === "library") {
+      const list = browseList();
+
+      if (key === "ArrowLeft") {
+        if (headerFocus === null) {
+          headerFocus = defaultHeaderFocus();
+        } else {
+          const order = headerOrder();
+          const idx = Math.max(0, order.indexOf(headerFocus) - 1);
+          headerFocus = order[idx];
+        }
+        renderLibrary();
+      } else if (key === "ArrowRight") {
+        if (headerFocus === null) {
+          headerFocus = defaultHeaderFocus();
+        } else {
+          const order = headerOrder();
+          const idx = Math.min(order.length - 1, order.indexOf(headerFocus) + 1);
+          headerFocus = order[idx];
+        }
+        renderLibrary();
+      } else if (key === "ArrowUp") {
+        if (headerFocus !== null) {
+          goScreen("now-playing");
+        } else if (focusedRow === 0) {
+          if (isDetailView()) {
+            const collectionId = openCollection && openCollection.id;
+            const kind = openCollection && openCollection.kind;
+            const backView = kind === "playlist" ? "playlists" : "albums";
+            const source = kind === "playlist" ? playlists : albums;
+            libView = backView;
+            openCollection = null;
+            collectionTracks = [];
+            detailLoading = false;
+            const idx = collectionId
+              ? source.findIndex(function (a) { return a.id === collectionId; })
+              : 0;
+            focusedRow = idx >= 0 ? idx : 0;
+            renderLibrary();
+          } else {
+            headerFocus = defaultHeaderFocus();
+            renderLibrary();
+          }
+        } else {
+          focusedRow--;
+          renderLibrary();
+        }
+      } else if (key === "ArrowDown") {
+        if (headerFocus !== null) {
+          headerFocus = null;
+          renderLibrary();
+        } else if (list.length) {
+          focusedRow = Math.min(focusedRow + 1, list.length - 1);
+          renderLibrary();
+        }
+      } else if (key === "Enter") {
+        if (headerFocus !== null) activateHeader();
+        else playSelected();
+      }
+      e.preventDefault();
+    }
+  });
+
+  elLoginBtn.addEventListener("click", doLogin);
+  elLoginPass.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      doLogin();
+    }
+  });
+
+  document.getElementById("btnPlay").addEventListener("click", togglePlay);
+  document.getElementById("btnNext").addEventListener("click", nextTrack);
+  document.getElementById("btnPrev").addEventListener("click", prevTrack);
+  elBtnShuffle.addEventListener("click", function () {
+    npFocus = "shuffle";
+    toggleShuffle();
+  });
+  elBtnLoop.addEventListener("click", function () {
+    npFocus = "loop";
+    cycleLoop();
+  });
+  elSignOut.addEventListener("click", signOut);
+  elTabSongs.addEventListener("click", function () { setLibView("songs"); });
+  elTabAlbums.addEventListener("click", function () { setLibView("albums"); });
+  elTabPlaylists.addEventListener("click", function () { setLibView("playlists"); });
+  elStatusAction.addEventListener("click", onStatusActivate);
+
+  lens.addEventListener("click", function () {
+    if (screen !== "login") lens.focus();
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
