@@ -632,7 +632,7 @@
   </div>
 </div>
 
-<audio id="audio" preload="metadata"></audio>
+<audio id="audio" preload="auto" playsinline webkit-playsinline></audio>
 
 <script>
 (function () {
@@ -682,10 +682,15 @@
   let loopMode = "off";
   let isPlaying = false;
   let screen = "status";
-  /** @type {'static'|'transcode'|'aac'|null} */
+  /** @type {'mp3'|'aac'|'streamMp3'|'transcode'|'static'|null} */
   let streamMode = null;
   let statusAction = "retry";
   let detailLoading = false;
+  let playGeneration = 0;
+  /** @type {AudioContext|null} */
+  let audioCtx = null;
+
+  const STREAM_CHAIN = ["mp3", "aac", "streamMp3", "transcode", "static"];
 
   const elAudio = document.getElementById("audio");
   const elArt = document.getElementById("artNow");
@@ -968,15 +973,44 @@
   }
 
   function streamUrl(itemId, mode) {
-    const base =
-      JELLYFIN_BASE +
-      "/Audio/" +
-      encodeURIComponent(itemId) +
-      "/stream?api_key=" +
-      encodeURIComponent(session.accessToken);
+    const id = encodeURIComponent(itemId);
+    const token = encodeURIComponent(session.accessToken);
+    const base = JELLYFIN_BASE + "/Audio/" + id + "/stream?api_key=" + token;
+    // Glasses webviews often can't decode FLAC/original — prefer MP3/AAC transcodes first.
+    if (mode === "mp3") {
+      return (
+        base +
+        "&Container=mp3&AudioCodec=mp3&AudioBitRate=192000" +
+        "&TranscodingContainer=mp3&TranscodingProtocol=http"
+      );
+    }
+    if (mode === "aac") {
+      return (
+        base +
+        "&Container=mp4&AudioCodec=aac&AudioBitRate=192000" +
+        "&TranscodingContainer=mp4&TranscodingProtocol=http"
+      );
+    }
+    if (mode === "streamMp3") {
+      return JELLYFIN_BASE + "/Audio/" + id + "/stream.mp3?api_key=" + token + "&AudioCodec=mp3";
+    }
     if (mode === "static") return base + "&static=true";
-    if (mode === "aac") return base + "&AudioCodec=aac";
     return base;
+  }
+
+  function unlockAudio() {
+    try {
+      elAudio.muted = false;
+      elAudio.volume = 1;
+      elAudio.playsInline = true;
+    } catch (_) {}
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        if (!audioCtx) audioCtx = new Ctx();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+      }
+    } catch (_) {}
   }
 
   function mapItem(item) {
@@ -1592,29 +1626,100 @@
     const t = tracks[currentIndex];
     if (!t || !session) return;
     streamMode = mode;
+    unlockAudio();
+    elAudio.removeAttribute("src");
     elAudio.src = streamUrl(t.id, mode);
     elAudio.load();
   }
 
+  function modeLabel(mode) {
+    if (mode === "mp3") return "MP3";
+    if (mode === "aac") return "AAC";
+    if (mode === "streamMp3") return "MP3 stream";
+    if (mode === "transcode") return "transcode";
+    if (mode === "static") return "original";
+    return mode || "";
+  }
+
+  function playWithMode(mode) {
+    if (!tracks.length || !session) return;
+    const gen = ++playGeneration;
+    setPlaybackError(mode === "mp3" ? "Starting playback…" : "Trying " + modeLabel(mode) + "…");
+    loadTrackSource(mode);
+
+    let started = false;
+    function attemptPlay() {
+      if (started || gen !== playGeneration) return;
+      started = true;
+      unlockAudio();
+      const p = elAudio.play();
+      if (p && typeof p.then === "function") {
+        p.then(function () {
+          if (gen !== playGeneration) return;
+          isPlaying = true;
+          setPlaybackError("");
+          renderNowPlaying();
+        }).catch(function (err) {
+          if (gen !== playGeneration) return;
+          isPlaying = false;
+          renderNowPlaying();
+          // play() rejection — try next codec path
+          if (!advanceStreamFallback()) {
+            setPlaybackError(
+              "Can't start audio" +
+                (err && err.message ? " (" + err.message + ")" : "") +
+                ". Check glasses volume / media permissions."
+            );
+          }
+        });
+      } else {
+        isPlaying = true;
+        setPlaybackError("");
+        renderNowPlaying();
+      }
+    }
+
+    elAudio.addEventListener("canplay", attemptPlay, { once: true });
+    elAudio.addEventListener("loadeddata", attemptPlay, { once: true });
+    // Some webviews never fire canplay — retry shortly
+    setTimeout(function () {
+      if (gen !== playGeneration) return;
+      if (!started) attemptPlay();
+    }, 600);
+
+    // If "playing" but time never advances, codec is likely silently failing
+    setTimeout(function () {
+      if (gen !== playGeneration) return;
+      if (elAudio.error) return;
+      if (!elAudio.paused && elAudio.currentTime < 0.05) {
+        setPlaybackError("No audio progress — trying another format…");
+        advanceStreamFallback();
+      }
+    }, 3500);
+  }
+
   function playCurrent() {
     if (!tracks.length) return;
-    setPlaybackError("");
+    unlockAudio();
     const t = tracks[currentIndex];
-    const needReload =
-      !elAudio.src ||
-      streamMode === null ||
-      !elAudio.src.includes(encodeURIComponent(t.id));
+    const sameTrack =
+      elAudio.src &&
+      (elAudio.src.indexOf(t.id) !== -1 ||
+        elAudio.src.indexOf(encodeURIComponent(t.id)) !== -1);
 
-    if (needReload) loadTrackSource("static");
+    if (!sameTrack || streamMode === null || elAudio.error) {
+      playWithMode("mp3");
+      return;
+    }
 
+    setPlaybackError("");
     const p = elAudio.play();
     if (p && typeof p.then === "function") {
       p.then(function () {
         isPlaying = true;
         renderNowPlaying();
       }).catch(function () {
-        isPlaying = false;
-        renderNowPlaying();
+        playWithMode(streamMode || "mp3");
       });
     } else {
       isPlaying = true;
@@ -1630,6 +1735,7 @@
 
   function togglePlay() {
     if (!tracks.length) return;
+    unlockAudio();
     if (isPlaying) pause();
     else playCurrent();
   }
@@ -1640,12 +1746,11 @@
     streamMode = null;
     setPlaybackError("");
     renderNowPlaying();
-    loadTrackSource("static");
-    if (autoplay) {
+    if (autoplay || isPlaying) {
       isPlaying = true;
-      playCurrent();
-    } else if (isPlaying) {
-      playCurrent();
+      playWithMode("mp3");
+    } else {
+      loadTrackSource("mp3");
     }
   }
 
@@ -1664,12 +1769,12 @@
     if (loopMode === "one") {
       try { elAudio.currentTime = 0; } catch (_) {}
       isPlaying = true;
+      unlockAudio();
       const p = elAudio.play();
       if (p && typeof p.then === "function") {
         p.catch(function () {
           streamMode = null;
-          loadTrackSource("static");
-          playCurrent();
+          playWithMode("mp3");
         });
       }
       renderNowPlaying();
@@ -1695,9 +1800,8 @@
     if (shuffleOn) applyShuffleKeepingCurrent();
     goScreen("now-playing");
     renderNowPlaying();
-    loadTrackSource("static");
     isPlaying = true;
-    playCurrent();
+    playWithMode("mp3");
   }
 
   function playSelected() {
@@ -1719,23 +1823,30 @@
   }
 
   function advanceStreamFallback() {
-    if (streamMode === "static") {
-      setPlaybackError("Original file unsupported — trying transcode…");
-      loadTrackSource("transcode");
-      elAudio.play().catch(function () {});
-      return true;
-    }
-    if (streamMode === "transcode") {
-      setPlaybackError("Trying AAC transcode…");
-      loadTrackSource("aac");
-      elAudio.play().catch(function () {});
-      return true;
-    }
-    return false;
+    const idx = STREAM_CHAIN.indexOf(streamMode);
+    const next = idx >= 0 ? STREAM_CHAIN[idx + 1] : "mp3";
+    if (!next) return false;
+    setPlaybackError("Format failed — trying " + modeLabel(next) + "…");
+    playWithMode(next);
+    return true;
   }
 
-  elAudio.addEventListener("timeupdate", updateRing);
+  elAudio.addEventListener("timeupdate", function () {
+    updateRing();
+    if (!elAudio.paused && elAudio.currentTime > 0.2) {
+      // Clear transient "Starting…" once audio is actually moving
+      if (elPlaybackError.textContent.indexOf("Starting") === 0 ||
+          elPlaybackError.textContent.indexOf("Trying") === 0) {
+        setPlaybackError("");
+      }
+    }
+  });
   elAudio.addEventListener("loadedmetadata", updateRing);
+  elAudio.addEventListener("playing", function () {
+    isPlaying = true;
+    unlockAudio();
+    renderNowPlaying();
+  });
   elAudio.addEventListener("play", function () {
     isPlaying = true;
     renderNowPlaying();
@@ -1751,10 +1862,19 @@
   });
   elAudio.addEventListener("error", function () {
     if (!tracks.length || !session) return;
+    const code = elAudio.error && elAudio.error.code;
+    const detail =
+      code === 4
+        ? "format/codec unsupported"
+        : code === 2
+          ? "network error reaching Jellyfin"
+          : code === 3
+            ? "decode error"
+            : "stream error";
     if (advanceStreamFallback()) return;
     isPlaying = false;
     renderNowPlaying();
-    setPlaybackError("Can't play this file (codec unsupported or stream failed).");
+    setPlaybackError("Can't play this file (" + detail + ").");
   });
 
   async function loadLibraryAndShow() {
@@ -1787,7 +1907,7 @@
       if (shuffleOn && tracks.length) applyShuffleKeepingCurrent();
       goScreen("now-playing");
       renderNowPlaying();
-      if (tracks.length) loadTrackSource("static");
+      if (tracks.length) loadTrackSource("mp3");
     } catch (err) {
       handleApiFailure(err, "library");
     }
