@@ -111,6 +111,13 @@
     padding:12px 14px;
     outline:none;
     font-family:inherit;
+    -webkit-user-select:text;
+    user-select:text;
+  }
+  /* type=password blocks voice/keyboard on many glasses webviews;
+     mask a normal text field instead so dictation still works. */
+  #login input.password-field{
+    -webkit-text-security:disc;
   }
   #login input:focus{
     border-color:var(--accent);
@@ -490,12 +497,12 @@
     <section class="screen" id="login">
       <div class="eyebrow">Manet</div>
       <div class="login-title">Sign in to Jellyfin</div>
-      <div class="login-sub">Use a normal keyboard on your phone or desktop. Credentials are stored so the glasses can skip this later.</div>
+      <div class="login-sub">Sign in once. On glasses, speak or type into each field — password uses a voice-friendly field (still masked on screen).</div>
       <label>Username
-        <input id="loginUser" type="text" autocomplete="username" spellcheck="false">
+        <input id="loginUser" type="text" autocomplete="username" spellcheck="false" enterkeyhint="next" autocapitalize="none" autocorrect="off">
       </label>
       <label>Password
-        <input id="loginPass" type="password" autocomplete="current-password">
+        <input id="loginPass" class="password-field" type="text" autocomplete="off" spellcheck="false" enterkeyhint="go" autocapitalize="none" autocorrect="off" inputmode="text">
       </label>
       <div class="login-actions">
         <button type="button" class="login-btn" id="loginBtn">Sign in</button>
@@ -1604,6 +1611,11 @@
     const key = e.key;
 
     if (screen === "login") {
+      if (key === "Enter" && document.activeElement === elLoginUser) {
+        e.preventDefault();
+        elLoginPass.focus();
+        return;
+      }
       if (key === "Enter" && document.activeElement === elLoginPass) {
         e.preventDefault();
         doLogin();
@@ -1707,12 +1719,23 @@
   });
 
   elLoginBtn.addEventListener("click", doLogin);
+  elLoginUser.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      elLoginPass.focus();
+    }
+  });
   elLoginPass.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
       doLogin();
     }
   });
+  // Ensure glasses taps focus the field (password-type inputs often fail here)
+  elLoginUser.addEventListener("pointerdown", function () { elLoginUser.focus(); });
+  elLoginPass.addEventListener("pointerdown", function () { elLoginPass.focus(); });
+  elLoginUser.addEventListener("click", function () { elLoginUser.focus(); });
+  elLoginPass.addEventListener("click", function () { elLoginPass.focus(); });
 
   document.getElementById("btnPlay").addEventListener("click", togglePlay);
   document.getElementById("btnNext").addEventListener("click", nextTrack);
