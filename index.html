@@ -689,12 +689,19 @@
   let statusAction = "retry";
   let detailLoading = false;
   let playGeneration = 0;
+  /** Which stream recipe we're on for the current track (for code-4 fallbacks). */
+  let streamAttempt = 0;
   /** @type {ReturnType<typeof setTimeout>|null} */
   let connectTimeoutId = null;
   /** @type {AudioContext|null} */
   let audioCtx = null;
+  /** @type {string|null} */
+  let objectUrl = null;
 
-  const CONNECT_TIMEOUT_MS = 8000;
+  const CONNECT_TIMEOUT_MS = 10000;
+  const DEVICE_ID = "manet-glasses";
+  // Ordered recipes — invalid AAC-in-mp3 was causing MEDIA_ERR_SRC_NOT_SUPPORTED (code 4).
+  const STREAM_RECIPES = ["universalMp3", "streamMp3", "universalAac", "playbackInfo", "blobMp3"];
 
   const elAudio = document.getElementById("audio");
   const elArt = document.getElementById("artNow");
@@ -976,21 +983,176 @@
     );
   }
 
+  function revokeObjectUrl() {
+    if (objectUrl) {
+      try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+      objectUrl = null;
+    }
+  }
+
+  function absJellyfinUrl(pathOrUrl) {
+    if (!pathOrUrl) return "";
+    if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+    return JELLYFIN_BASE + (pathOrUrl.charAt(0) === "/" ? pathOrUrl : "/" + pathOrUrl);
+  }
+
+  function withApiKey(url) {
+    if (!url || !session) return url;
+    if (/[?&]api_key=/.test(url)) return url;
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "api_key=" + encodeURIComponent(session.accessToken);
+  }
+
   /**
-   * Always force a low-bitrate AAC transcode. Raw FLAC/large MP3 saturates the
-   * home upload link behind Tailscale Funnel — never stream static originals.
-   * (No static=true so Jellyfin remuxes/transcodes on the fly.)
+   * Build browser-safe Jellyfin audio URLs.
+   * - Never use static originals (FLAC saturates Funnel upload).
+   * - Never mix AudioCodec=aac with Container=mp3 (invalid → code 4).
+   * - EnableRedirection=false prevents 302 to internal http://172.x hosts.
    */
-  function streamUrl(itemId) {
+  function streamUrl(itemId, recipe) {
     const id = encodeURIComponent(itemId);
     const token = encodeURIComponent(session.accessToken);
-    return (
-      JELLYFIN_BASE +
-      "/Audio/" +
-      id +
-      "/stream?MediaContainer=mp3&Container=mp3&AudioCodec=aac&AudioBitrate=128000&api_key=" +
-      token
+    const userId = encodeURIComponent(session.userId);
+    recipe = recipe || "universalMp3";
+
+    if (recipe === "universalMp3") {
+      return (
+        JELLYFIN_BASE +
+        "/Audio/" + id + "/universal" +
+        "?UserId=" + userId +
+        "&DeviceId=" + encodeURIComponent(DEVICE_ID) +
+        "&MaxStreamingBitrate=140000000" +
+        "&Container=" + encodeURIComponent("mp3,aac,m4a,flac,opus,wav,ogg") +
+        "&TranscodingContainer=mp3" +
+        "&TranscodingProtocol=http" +
+        "&AudioCodec=mp3" +
+        "&AudioBitRate=128000" +
+        "&MaxAudioChannels=2" +
+        "&EnableRedirection=false" +
+        "&EnableRemoteMedia=false" +
+        "&api_key=" + token
+      );
+    }
+    if (recipe === "streamMp3") {
+      return (
+        JELLYFIN_BASE +
+        "/Audio/" + id + "/stream.mp3" +
+        "?api_key=" + token +
+        "&AudioCodec=mp3" +
+        "&Container=mp3" +
+        "&TranscodingContainer=mp3" +
+        "&TranscodingProtocol=http" +
+        "&AudioBitRate=128000" +
+        "&MaxAudioChannels=2" +
+        "&EnableRedirection=false"
+      );
+    }
+    if (recipe === "universalAac") {
+      // AAC in an audio-friendly path (NOT Container=mp3)
+      return (
+        JELLYFIN_BASE +
+        "/Audio/" + id + "/universal" +
+        "?UserId=" + userId +
+        "&DeviceId=" + encodeURIComponent(DEVICE_ID) +
+        "&MaxStreamingBitrate=140000000" +
+        "&Container=" + encodeURIComponent("aac,mp3,m4a,mp4,flac") +
+        "&TranscodingContainer=mp3" +
+        "&TranscodingProtocol=http" +
+        "&AudioCodec=mp3" +
+        "&AudioBitRate=128000" +
+        "&EnableRedirection=false" +
+        "&api_key=" + token
+      );
+    }
+    return streamUrl(itemId, "streamMp3");
+  }
+
+  async function resolvePlaybackInfoUrl(itemId) {
+    const body = {
+      UserId: session.userId,
+      DeviceProfile: {
+        MaxStreamingBitrate: 140000000,
+        MaxStaticBitrate: 140000000,
+        MusicStreamingTranscodingBitrate: 128000,
+        DirectPlayProfiles: [
+          { Type: "Audio", Container: "mp3", AudioCodec: "mp3" },
+          { Type: "Audio", Container: "aac", AudioCodec: "aac" },
+          { Type: "Audio", Container: "m4a,mp4", AudioCodec: "aac" },
+        ],
+        TranscodingProfiles: [
+          {
+            Type: "Audio",
+            Container: "mp3",
+            AudioCodec: "mp3",
+            Protocol: "http",
+            Context: "Streaming",
+            MaxAudioChannels: "2",
+          },
+        ],
+        ContainerProfiles: [],
+        CodecProfiles: [],
+        SubtitleProfiles: [],
+      },
+    };
+    const data = await apiFetch(
+      "/Items/" + encodeURIComponent(itemId) + "/PlaybackInfo?UserId=" + encodeURIComponent(session.userId),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }
     );
+    const source = data && data.MediaSources && data.MediaSources[0];
+    if (!source) throw new Error("No MediaSources");
+    if (source.TranscodingUrl) return withApiKey(absJellyfinUrl(source.TranscodingUrl));
+    if (source.DirectStreamUrl) return withApiKey(absJellyfinUrl(source.DirectStreamUrl));
+    return streamUrl(itemId, "streamMp3");
+  }
+
+  async function resolveBlobUrl(itemId) {
+    const candidates = [
+      streamUrl(itemId, "universalMp3"),
+      streamUrl(itemId, "streamMp3"),
+    ];
+    let lastErr = null;
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        const res = await fetch(candidates[i], {
+          headers: { "X-Emby-Token": session.accessToken },
+          redirect: "follow",
+        });
+        if (!res.ok) {
+          lastErr = new Error("HTTP " + res.status);
+          continue;
+        }
+        const finalUrl = res.url || "";
+        if (/^http:\/\//i.test(finalUrl) && finalUrl.indexOf("tail708903.ts.net") < 0) {
+          lastErr = new Error("Redirected to unreachable internal URL");
+          continue;
+        }
+        const buf = await res.arrayBuffer();
+        if (!buf || !buf.byteLength) {
+          lastErr = new Error("Empty body");
+          continue;
+        }
+        const head = String.fromCharCode.apply(null, Array.from(new Uint8Array(buf.slice(0, 16))));
+        if (/^\s*</.test(head) || /^<!DOCTYPE/i.test(head)) {
+          lastErr = new Error("Got HTML instead of audio");
+          continue;
+        }
+        revokeObjectUrl();
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+        return objectUrl;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("Blob fetch failed");
+  }
+
+  async function resolveStreamUrl(itemId, recipe) {
+    if (recipe === "playbackInfo") return resolvePlaybackInfoUrl(itemId);
+    if (recipe === "blobMp3") return resolveBlobUrl(itemId);
+    return streamUrl(itemId, recipe);
   }
 
   function unlockAudio() {
@@ -1096,8 +1258,11 @@
     isPlaying = false;
     streamLoaded = false;
     playbackNeedsRetry = false;
+    streamAttempt = 0;
     detailLoading = false;
+    playGeneration++;
     clearConnectTimeout();
+    revokeObjectUrl();
     elAudio.pause();
     elAudio.removeAttribute("src");
     elAudio.load();
@@ -1648,14 +1813,15 @@
     renderModeButtons();
   }
 
-  function loadTrackSource() {
+  function loadTrackSource(url) {
     const t = tracks[currentIndex];
-    if (!t || !session) return;
+    if (!t || !session || !url) return;
     streamLoaded = true;
     unlockAudio();
+    if (!objectUrl || url !== objectUrl) revokeObjectUrl();
     elAudio.removeAttribute("src");
-    elAudio.src = streamUrl(t.id);
-    elAudio.load();
+    elAudio.src = url;
+    try { elAudio.load(); } catch (_) {}
   }
 
   function armConnectTimeout(gen) {
@@ -1664,11 +1830,12 @@
       connectTimeoutId = null;
       if (gen !== playGeneration) return;
       if (!elAudio.paused && elAudio.currentTime > 0.05) return;
-      // Still no canplay / audible progress — don't spin forever
+      // Try next recipe before giving up
+      if (advanceStreamRecipe(gen)) return;
       isPlaying = false;
       try { elAudio.pause(); } catch (_) {}
       renderNowPlaying();
-      setPlaybackStatus("Still connecting — check signal", { retry: true });
+      setPlaybackStatus("Still connecting — check signal. ⏎ Retry", { retry: true });
     }, CONNECT_TIMEOUT_MS);
   }
 
@@ -1683,6 +1850,7 @@
         renderNowPlaying();
       }).catch(function (err) {
         if (gen !== playGeneration) return;
+        if (advanceStreamRecipe(gen)) return;
         clearConnectTimeout();
         isPlaying = false;
         renderNowPlaying();
@@ -1699,26 +1867,66 @@
     }
   }
 
+  function advanceStreamRecipe(gen) {
+    if (gen !== playGeneration) return false;
+    if (streamAttempt + 1 >= STREAM_RECIPES.length) return false;
+    streamAttempt += 1;
+    const recipe = STREAM_RECIPES[streamAttempt];
+    setPlaybackStatus("Format failed — trying " + recipe + "…");
+    startRecipe(gen, recipe);
+    return true;
+  }
+
+  function startRecipe(gen, recipe) {
+    const t = tracks[currentIndex];
+    if (!t || !session) return;
+    if (gen !== playGeneration) return;
+    resolveStreamUrl(t.id, recipe)
+      .then(function (url) {
+        if (gen !== playGeneration) return;
+        if (!url) throw new Error("Empty URL");
+        if (/^http:\/\//i.test(url) && url.indexOf("tail708903.ts.net") < 0) {
+          throw new Error("Blocked internal HTTP redirect");
+        }
+        loadTrackSource(url);
+        armConnectTimeout(gen);
+        elAudio.addEventListener(
+          "canplay",
+          function onCanPlay() {
+            if (gen !== playGeneration) return;
+            attemptPlay(gen);
+          },
+          { once: true }
+        );
+        setTimeout(function () {
+          if (gen !== playGeneration) return;
+          if (elAudio.readyState >= 2) attemptPlay(gen);
+        }, 400);
+      })
+      .catch(function (err) {
+        if (gen !== playGeneration) return;
+        setPlaybackStatus(
+          "Setup failed (" + ((err && err.message) || "error") + ") — trying next…"
+        );
+        if (!advanceStreamRecipe(gen)) {
+          clearConnectTimeout();
+          isPlaying = false;
+          renderNowPlaying();
+          setPlaybackStatus(
+            "Can't play (" + ((err && err.message) || mediaErrorDetail()) + "). ⏎ Retry",
+            { retry: true }
+          );
+        }
+      });
+  }
+
   function playTrack() {
     if (!tracks.length || !session) return;
     const gen = ++playGeneration;
     playbackNeedsRetry = false;
+    streamAttempt = 0;
     setPlaybackStatus("Connecting…");
-    loadTrackSource();
-    armConnectTimeout(gen);
-    // Kick play as soon as the element can; webviews vary on which event fires.
-    elAudio.addEventListener(
-      "canplay",
-      function onCanPlay() {
-        if (gen !== playGeneration) return;
-        attemptPlay(gen);
-      },
-      { once: true }
-    );
-    setTimeout(function () {
-      if (gen !== playGeneration) return;
-      if (elAudio.readyState >= 2) attemptPlay(gen);
-    }, 400);
+    startRecipe(gen, STREAM_RECIPES[0]);
   }
 
   function playCurrent() {
@@ -1729,7 +1937,8 @@
       streamLoaded &&
       elAudio.src &&
       (elAudio.src.indexOf(t.id) !== -1 ||
-        elAudio.src.indexOf(encodeURIComponent(t.id)) !== -1);
+        elAudio.src.indexOf(encodeURIComponent(t.id)) !== -1 ||
+        (objectUrl && elAudio.src === objectUrl));
 
     if (!sameTrack || elAudio.error || playbackNeedsRetry) {
       playTrack();
@@ -1772,14 +1981,13 @@
     if (!tracks.length) return;
     currentIndex = index;
     streamLoaded = false;
+    streamAttempt = 0;
     playbackNeedsRetry = false;
     setPlaybackStatus("");
     renderNowPlaying();
     if (autoplay || isPlaying) {
       isPlaying = true;
       playTrack();
-    } else {
-      loadTrackSource();
     }
   }
 
@@ -1885,6 +2093,8 @@
     if (
       !msg ||
       msg.indexOf("Connecting") === 0 ||
+      msg.indexOf("Format failed") === 0 ||
+      msg.indexOf("Setup failed") === 0 ||
       msg === "Buffering…" ||
       msg === "Now playing"
     ) {
@@ -1923,6 +2133,9 @@
   elAudio.addEventListener("error", function () {
     if (!tracks.length || !session) return;
     if (playGeneration === 0) return;
+    const gen = playGeneration;
+    // Code 4 / bad MIME / redirect — walk the recipe chain before surfacing retry.
+    if (advanceStreamRecipe(gen)) return;
     clearConnectTimeout();
     isPlaying = false;
     renderNowPlaying();
