@@ -682,7 +682,7 @@
   let loopMode = "off";
   let isPlaying = false;
   let screen = "status";
-  /** True once the current track's AAC stream URL is loaded into <audio>. */
+  /** True once the current track URL is loaded into <audio>. */
   let streamLoaded = false;
   /** When true, Enter on Now Playing retries the stream instead of toggling pause. */
   let playbackNeedsRetry = false;
@@ -691,17 +691,25 @@
   let playGeneration = 0;
   /** Which stream recipe we're on for the current track (for code-4 fallbacks). */
   let streamAttempt = 0;
+  /** User explicitly paused — don't auto-resume after display sleep. */
+  let userPaused = false;
   /** @type {ReturnType<typeof setTimeout>|null} */
   let connectTimeoutId = null;
   /** @type {AudioContext|null} */
   let audioCtx = null;
   /** @type {string|null} */
   let objectUrl = null;
+  /** @type {WakeLockSentinel|null} */
+  let wakeLock = null;
+  let prefetchId = null;
+  /** @type {string|null} */
+  let prefetchUrl = null;
 
-  const CONNECT_TIMEOUT_MS = 10000;
+  const CONNECT_TIMEOUT_MS = 45000; // full-track blob download can be slow on cellular
   const DEVICE_ID = "manet-glasses";
-  // Ordered recipes — invalid AAC-in-mp3 was causing MEDIA_ERR_SRC_NOT_SUPPORTED (code 4).
-  const STREAM_RECIPES = ["universalMp3", "streamMp3", "universalAac", "playbackInfo", "blobMp3"];
+  // Direct jellyfin URLs often fail with MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) on
+  // phone/glasses. Fetching MP3 bytes and playing via blob (forced audio/mpeg) works.
+  const STREAM_RECIPES = ["blobMp3", "streamMp3", "universalMp3", "playbackInfo"];
 
   const elAudio = document.getElementById("audio");
   const elArt = document.getElementById("artNow");
@@ -1109,9 +1117,20 @@
   }
 
   async function resolveBlobUrl(itemId) {
+    // Reuse prefetch if we already downloaded this track
+    if (prefetchId === itemId && prefetchUrl) {
+      const url = prefetchUrl;
+      prefetchId = null;
+      prefetchUrl = null;
+      if (objectUrl && objectUrl !== url) {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+      }
+      objectUrl = url;
+      return url;
+    }
     const candidates = [
-      streamUrl(itemId, "universalMp3"),
       streamUrl(itemId, "streamMp3"),
+      streamUrl(itemId, "universalMp3"),
     ];
     let lastErr = null;
     for (let i = 0; i < candidates.length; i++) {
@@ -1149,6 +1168,40 @@
     throw lastErr || new Error("Blob fetch failed");
   }
 
+  function clearPrefetch() {
+    if (prefetchUrl && prefetchUrl !== objectUrl) {
+      try { URL.revokeObjectURL(prefetchUrl); } catch (_) {}
+    }
+    prefetchId = null;
+    prefetchUrl = null;
+  }
+
+  function prefetchNextTrack() {
+    if (!session || !tracks.length || tracks.length < 2) return;
+    const next = tracks[(currentIndex + 1) % tracks.length];
+    if (!next || next.id === prefetchId) return;
+    const targetId = next.id;
+    const fetchUrl = streamUrl(targetId, "streamMp3");
+    fetch(fetchUrl, {
+      headers: { "X-Emby-Token": session.accessToken },
+      redirect: "follow",
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.arrayBuffer();
+      })
+      .then(function (buf) {
+        if (!buf || !buf.byteLength) return;
+        if (!tracks.length) return;
+        const stillNext = tracks[(currentIndex + 1) % tracks.length];
+        if (!stillNext || stillNext.id !== targetId) return;
+        clearPrefetch();
+        prefetchId = targetId;
+        prefetchUrl = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+      })
+      .catch(function () {});
+  }
+
   async function resolveStreamUrl(itemId, recipe) {
     if (recipe === "playbackInfo") return resolvePlaybackInfoUrl(itemId);
     if (recipe === "blobMp3") return resolveBlobUrl(itemId);
@@ -1167,6 +1220,63 @@
         if (!audioCtx) audioCtx = new Ctx();
         if (audioCtx.state === "suspended") audioCtx.resume();
       }
+    } catch (_) {}
+  }
+
+  async function requestWakeLock() {
+    try {
+      if (!("wakeLock" in navigator)) return;
+      if (wakeLock) return;
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", function () {
+        wakeLock = null;
+      });
+    } catch (_) {
+      wakeLock = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    if (!wakeLock) return;
+    try { wakeLock.release(); } catch (_) {}
+    wakeLock = null;
+  }
+
+  function updateMediaSession() {
+    if (!("mediaSession" in navigator) || !tracks.length) return;
+    const t = tracks[currentIndex];
+    if (!t) return;
+    try {
+      const art = imageUrl(t.albumId || t.id);
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: t.title || "Manet",
+        artist: t.artist || "",
+        album: t.album || "Jellyfin",
+        artwork: art ? [{ src: art, sizes: "512x512", type: "image/jpeg" }] : [],
+      });
+      navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    } catch (_) {}
+  }
+
+  function bindMediaSessionHandlers() {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler("play", function () {
+        userPaused = false;
+        playCurrent();
+      });
+      navigator.mediaSession.setActionHandler("pause", function () {
+        userPaused = true;
+        pause();
+      });
+      navigator.mediaSession.setActionHandler("previoustrack", function () {
+        userPaused = false;
+        prevTrack();
+      });
+      navigator.mediaSession.setActionHandler("nexttrack", function () {
+        userPaused = false;
+        nextTrack();
+      });
     } catch (_) {}
   }
 
@@ -1259,9 +1369,12 @@
     streamLoaded = false;
     playbackNeedsRetry = false;
     streamAttempt = 0;
+    userPaused = false;
     detailLoading = false;
     playGeneration++;
     clearConnectTimeout();
+    clearPrefetch();
+    releaseWakeLock();
     revokeObjectUrl();
     elAudio.pause();
     elAudio.removeAttribute("src");
@@ -1872,7 +1985,11 @@
     if (streamAttempt + 1 >= STREAM_RECIPES.length) return false;
     streamAttempt += 1;
     const recipe = STREAM_RECIPES[streamAttempt];
-    setPlaybackStatus("Format failed — trying " + recipe + "…");
+    setPlaybackStatus(
+      recipe === "blobMp3"
+        ? "Downloading audio…"
+        : "Format failed — trying " + recipe + "…"
+    );
     startRecipe(gen, recipe);
     return true;
   }
@@ -1924,8 +2041,9 @@
     if (!tracks.length || !session) return;
     const gen = ++playGeneration;
     playbackNeedsRetry = false;
+    userPaused = false;
     streamAttempt = 0;
-    setPlaybackStatus("Connecting…");
+    setPlaybackStatus("Downloading audio…");
     startRecipe(gen, STREAM_RECIPES[0]);
   }
 
@@ -1961,8 +2079,11 @@
   }
 
   function pause() {
+    userPaused = true;
     isPlaying = false;
     elAudio.pause();
+    releaseWakeLock();
+    updateMediaSession();
     renderNowPlaying();
   }
 
@@ -1970,11 +2091,15 @@
     if (!tracks.length) return;
     unlockAudio();
     if (playbackNeedsRetry) {
+      userPaused = false;
       playTrack();
       return;
     }
     if (isPlaying) pause();
-    else playCurrent();
+    else {
+      userPaused = false;
+      playCurrent();
+    }
   }
 
   function goToIndex(index, autoplay) {
@@ -2093,6 +2218,7 @@
     if (
       !msg ||
       msg.indexOf("Connecting") === 0 ||
+      msg.indexOf("Downloading") === 0 ||
       msg.indexOf("Format failed") === 0 ||
       msg.indexOf("Setup failed") === 0 ||
       msg === "Buffering…" ||
@@ -2106,8 +2232,12 @@
 
   elAudio.addEventListener("playing", function () {
     isPlaying = true;
+    userPaused = false;
     unlockAudio();
+    requestWakeLock();
+    updateMediaSession();
     renderNowPlaying();
+    prefetchNextTrack();
     if (elAudio.currentTime > 0.05) {
       clearConnectTimeout();
       setPlaybackStatus("Now playing");
@@ -2116,12 +2246,15 @@
 
   elAudio.addEventListener("play", function () {
     isPlaying = true;
+    updateMediaSession();
     renderNowPlaying();
   });
 
   elAudio.addEventListener("pause", function () {
     if (!elAudio.ended && !playbackNeedsRetry) {
       isPlaying = false;
+      updateMediaSession();
+      // System/display sleep often fires pause — remember intent via userPaused
       renderNowPlaying();
     }
   });
@@ -2395,6 +2528,31 @@
     if (screen !== "login") lens.focus();
   });
 
+  // Keep audio alive across display sleep / tab hide when possible
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") {
+      unlockAudio();
+      if (!userPaused && tracks.length && !playbackNeedsRetry) {
+        if (elAudio.paused && elAudio.src) {
+          elAudio.play().catch(function () {});
+        }
+        requestWakeLock();
+        updateMediaSession();
+      }
+    } else if (!userPaused && isPlaying) {
+      // Display slept — ask OS to treat this as ongoing media
+      updateMediaSession();
+    }
+  });
+
+  window.addEventListener("pageshow", function () {
+    if (!userPaused && tracks.length && elAudio.paused && elAudio.src && !playbackNeedsRetry) {
+      unlockAudio();
+      elAudio.play().catch(function () {});
+    }
+  });
+
+  bindMediaSessionHandlers();
   boot();
 })();
 </script>
