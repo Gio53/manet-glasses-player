@@ -705,11 +705,16 @@
   /** @type {string|null} */
   let prefetchUrl = null;
 
-  const CONNECT_TIMEOUT_MS = 45000; // full-track blob download can be slow on cellular
+  const CONNECT_TIMEOUT_MS = 45000;
   const DEVICE_ID = "manet-glasses";
-  // Direct jellyfin URLs often fail with MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) on
-  // phone/glasses. Fetching MP3 bytes and playing via blob (forced audio/mpeg) works.
-  const STREAM_RECIPES = ["blobMp3", "streamMp3", "universalMp3", "playbackInfo"];
+  // Lower bitrate = faster Funnel downloads; progressive play starts before the full file arrives.
+  const AUDIO_BITRATE = 96000;
+  // progressiveMp3 starts audio ASAP via MediaSource; blobMp3 waits for the full file.
+  const STREAM_RECIPES = ["progressiveMp3", "blobMp3", "streamMp3", "universalMp3"];
+  /** @type {AbortController|null} */
+  let activeFetchAbort = null;
+  /** @type {MediaSource|null} */
+  let activeMediaSource = null;
 
   const elAudio = document.getElementById("audio");
   const elArt = document.getElementById("artNow");
@@ -1033,7 +1038,7 @@
         "&TranscodingContainer=mp3" +
         "&TranscodingProtocol=http" +
         "&AudioCodec=mp3" +
-        "&AudioBitRate=128000" +
+        "&AudioBitRate=" + AUDIO_BITRATE +
         "&MaxAudioChannels=2" +
         "&EnableRedirection=false" +
         "&EnableRemoteMedia=false" +
@@ -1049,7 +1054,7 @@
         "&Container=mp3" +
         "&TranscodingContainer=mp3" +
         "&TranscodingProtocol=http" +
-        "&AudioBitRate=128000" +
+        "&AudioBitRate=" + AUDIO_BITRATE +
         "&MaxAudioChannels=2" +
         "&EnableRedirection=false"
       );
@@ -1066,7 +1071,7 @@
         "&TranscodingContainer=mp3" +
         "&TranscodingProtocol=http" +
         "&AudioCodec=mp3" +
-        "&AudioBitRate=128000" +
+        "&AudioBitRate=" + AUDIO_BITRATE +
         "&EnableRedirection=false" +
         "&api_key=" + token
       );
@@ -1080,7 +1085,7 @@
       DeviceProfile: {
         MaxStreamingBitrate: 140000000,
         MaxStaticBitrate: 140000000,
-        MusicStreamingTranscodingBitrate: 128000,
+        MusicStreamingTranscodingBitrate: AUDIO_BITRATE,
         DirectPlayProfiles: [
           { Type: "Audio", Container: "mp3", AudioCodec: "mp3" },
           { Type: "Audio", Container: "aac", AudioCodec: "aac" },
@@ -1116,6 +1121,170 @@
     return streamUrl(itemId, "streamMp3");
   }
 
+  function abortActiveStream() {
+    if (activeFetchAbort) {
+      try { activeFetchAbort.abort(); } catch (_) {}
+      activeFetchAbort = null;
+    }
+    if (activeMediaSource) {
+      try {
+        if (activeMediaSource.readyState === "open") {
+          activeMediaSource.endOfStream();
+        }
+      } catch (_) {}
+      activeMediaSource = null;
+    }
+  }
+
+  function supportsMpegMse() {
+    try {
+      return !!(window.MediaSource && MediaSource.isTypeSupported("audio/mpeg"));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function appendSourceBuffer(sb, chunk) {
+    return new Promise(function (resolve, reject) {
+      function doAppend() {
+        if (sb.updating) {
+          sb.addEventListener("updateend", doAppend, { once: true });
+          return;
+        }
+        try {
+          sb.appendBuffer(chunk);
+          sb.addEventListener("updateend", function () { resolve(); }, { once: true });
+          sb.addEventListener("error", function () { reject(new Error("SourceBuffer error")); }, { once: true });
+        } catch (err) {
+          reject(err);
+        }
+      }
+      doAppend();
+    });
+  }
+
+  /**
+   * Start playback as soon as the first MP3 chunks arrive (MediaSource),
+   * instead of waiting for the entire file download.
+   */
+  async function playProgressiveMp3(itemId, gen) {
+    if (!supportsMpegMse()) {
+      throw new Error("MSE unavailable");
+    }
+    abortActiveStream();
+    const controller = new AbortController();
+    activeFetchAbort = controller;
+    const fetchUrl = streamUrl(itemId, "streamMp3");
+    const res = await fetch(fetchUrl, {
+      headers: { "X-Emby-Token": session.accessToken },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const finalUrl = res.url || "";
+    if (/^http:\/\//i.test(finalUrl) && finalUrl.indexOf("tail708903.ts.net") < 0) {
+      throw new Error("Redirected to unreachable internal URL");
+    }
+    if (!res.body || !res.body.getReader) {
+      // No streaming body — fall back to full buffer
+      const buf = await res.arrayBuffer();
+      if (!buf || !buf.byteLength) throw new Error("Empty body");
+      revokeObjectUrl();
+      objectUrl = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+      return objectUrl;
+    }
+
+    const ms = new MediaSource();
+    activeMediaSource = ms;
+    revokeObjectUrl();
+    objectUrl = URL.createObjectURL(ms);
+    streamLoaded = true;
+    unlockAudio();
+    elAudio.removeAttribute("src");
+    elAudio.src = objectUrl;
+    try { elAudio.load(); } catch (_) {}
+
+    await new Promise(function (resolve, reject) {
+      const t = setTimeout(function () { reject(new Error("MediaSource open timeout")); }, 8000);
+      ms.addEventListener("sourceopen", function () {
+        clearTimeout(t);
+        resolve();
+      }, { once: true });
+      ms.addEventListener("error", function () {
+        clearTimeout(t);
+        reject(new Error("MediaSource error"));
+      }, { once: true });
+    });
+    if (gen !== playGeneration) throw new Error("Cancelled");
+
+    const sb = ms.addSourceBuffer("audio/mpeg");
+    const reader = res.body.getReader();
+    let started = false;
+    let received = 0;
+    const START_BYTES = 48 * 1024; // ~4s of 96kbps — enough to begin playback
+
+    setPlaybackStatus("Starting…");
+    armConnectTimeout(gen);
+
+    (async function pump() {
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (gen !== playGeneration) {
+            try { reader.cancel(); } catch (_) {}
+            return;
+          }
+          if (result.done) break;
+          const chunk = result.value;
+          received += chunk.byteLength;
+          await appendSourceBuffer(sb, chunk);
+          if (!started && received >= START_BYTES) {
+            started = true;
+            setPlaybackStatus("Now playing");
+            attemptPlay(gen);
+          } else if (!started) {
+            const kb = Math.round(received / 1024);
+            setPlaybackStatus("Buffering " + kb + " KB…");
+          }
+        }
+        // Wait for any in-flight append
+        if (sb.updating) {
+          await new Promise(function (resolve) {
+            sb.addEventListener("updateend", resolve, { once: true });
+          });
+        }
+        if (ms.readyState === "open") {
+          try { ms.endOfStream(); } catch (_) {}
+        }
+        if (!started) {
+          started = true;
+          attemptPlay(gen);
+        }
+        // Allow prefetch now that this track's download is complete.
+        if (activeFetchAbort === controller) activeFetchAbort = null;
+        prefetchNextTrack();
+      } catch (err) {
+        if (gen !== playGeneration) return;
+        if (err && err.name === "AbortError") return;
+        if (!started) {
+          // Let startRecipe / caller fall through via rejection path
+          setPlaybackStatus("Stream stalled — trying full download…");
+          if (!advanceStreamRecipe(gen)) {
+            setPlaybackStatus(
+              "Can't play (" + ((err && err.message) || "stream error") + "). ⏎ Retry",
+              { retry: true }
+            );
+          }
+        }
+      } finally {
+        if (activeFetchAbort === controller) activeFetchAbort = null;
+      }
+    })();
+
+    // Signal to startRecipe that progressive mode owns playback (no second load)
+    return "__progressive__";
+  }
+
   async function resolveBlobUrl(itemId) {
     // Reuse prefetch if we already downloaded this track
     if (prefetchId === itemId && prefetchUrl) {
@@ -1135,9 +1304,12 @@
     let lastErr = null;
     for (let i = 0; i < candidates.length; i++) {
       try {
+        const controller = new AbortController();
+        activeFetchAbort = controller;
         const res = await fetch(candidates[i], {
           headers: { "X-Emby-Token": session.accessToken },
           redirect: "follow",
+          signal: controller.signal,
         });
         if (!res.ok) {
           lastErr = new Error("HTTP " + res.status);
@@ -1147,6 +1319,37 @@
         if (/^http:\/\//i.test(finalUrl) && finalUrl.indexOf("tail708903.ts.net") < 0) {
           lastErr = new Error("Redirected to unreachable internal URL");
           continue;
+        }
+        // Prefer streaming read with progress updates
+        if (res.body && res.body.getReader) {
+          const reader = res.body.getReader();
+          const chunks = [];
+          let received = 0;
+          while (true) {
+            const result = await reader.read();
+            if (result.done) break;
+            chunks.push(result.value);
+            received += result.value.byteLength;
+            setPlaybackStatus("Downloading " + Math.round(received / 1024) + " KB…");
+          }
+          const buf = new Uint8Array(received);
+          let offset = 0;
+          for (let c = 0; c < chunks.length; c++) {
+            buf.set(chunks[c], offset);
+            offset += chunks[c].byteLength;
+          }
+          if (!received) {
+            lastErr = new Error("Empty body");
+            continue;
+          }
+          const head = String.fromCharCode.apply(null, Array.from(buf.slice(0, 16)));
+          if (/^\s*</.test(head) || /^<!DOCTYPE/i.test(head)) {
+            lastErr = new Error("Got HTML instead of audio");
+            continue;
+          }
+          revokeObjectUrl();
+          objectUrl = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+          return objectUrl;
         }
         const buf = await res.arrayBuffer();
         if (!buf || !buf.byteLength) {
@@ -1162,7 +1365,10 @@
         objectUrl = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
         return objectUrl;
       } catch (err) {
+        if (err && err.name === "AbortError") throw err;
         lastErr = err;
+      } finally {
+        activeFetchAbort = null;
       }
     }
     throw lastErr || new Error("Blob fetch failed");
@@ -1177,6 +1383,8 @@
   }
 
   function prefetchNextTrack() {
+    // Don't steal Funnel bandwidth while the current track is still streaming in.
+    if (activeFetchAbort || (activeMediaSource && activeMediaSource.readyState === "open")) return;
     if (!session || !tracks.length || tracks.length < 2) return;
     const next = tracks[(currentIndex + 1) % tracks.length];
     if (!next || next.id === prefetchId) return;
@@ -1373,6 +1581,7 @@
     detailLoading = false;
     playGeneration++;
     clearConnectTimeout();
+    abortActiveStream();
     clearPrefetch();
     releaseWakeLock();
     revokeObjectUrl();
@@ -1933,6 +2142,7 @@
   function loadTrackSource(url) {
     const t = tracks[currentIndex];
     if (!t || !session || !url) return;
+    abortActiveStream();
     streamLoaded = true;
     unlockAudio();
     if (!objectUrl || url !== objectUrl) revokeObjectUrl();
@@ -2002,6 +2212,42 @@
     const t = tracks[currentIndex];
     if (!t || !session) return;
     if (gen !== playGeneration) return;
+
+    if (recipe === "progressiveMp3") {
+      setPlaybackStatus("Starting…");
+      playProgressiveMp3(t.id, gen)
+        .then(function (result) {
+          if (gen !== playGeneration) return;
+          if (result === "__progressive__") return; // pump owns playback
+          if (!result) throw new Error("Empty URL");
+          loadTrackSource(result);
+          armConnectTimeout(gen);
+          elAudio.addEventListener("canplay", function () {
+            if (gen !== playGeneration) return;
+            attemptPlay(gen);
+          }, { once: true });
+          setTimeout(function () {
+            if (gen !== playGeneration) return;
+            if (elAudio.readyState >= 2) attemptPlay(gen);
+          }, 300);
+        })
+        .catch(function (err) {
+          if (gen !== playGeneration) return;
+          if (err && err.name === "AbortError") return;
+          setPlaybackStatus("Quick start failed — downloading full track…");
+          if (!advanceStreamRecipe(gen)) {
+            clearConnectTimeout();
+            isPlaying = false;
+            renderNowPlaying();
+            setPlaybackStatus(
+              "Can't play (" + ((err && err.message) || mediaErrorDetail()) + "). ⏎ Retry",
+              { retry: true }
+            );
+          }
+        });
+      return;
+    }
+
     resolveStreamUrl(t.id, recipe)
       .then(function (url) {
         if (gen !== playGeneration) return;
@@ -2026,6 +2272,7 @@
       })
       .catch(function (err) {
         if (gen !== playGeneration) return;
+        if (err && err.name === "AbortError") return;
         setPlaybackStatus(
           "Setup failed (" + ((err && err.message) || "error") + ") — trying next…"
         );
@@ -2043,11 +2290,12 @@
 
   function playTrack() {
     if (!tracks.length || !session) return;
+    abortActiveStream();
     const gen = ++playGeneration;
     playbackNeedsRetry = false;
     userPaused = false;
     streamAttempt = 0;
-    setPlaybackStatus("Downloading audio…");
+    setPlaybackStatus(supportsMpegMse() ? "Starting…" : "Downloading audio…");
     startRecipe(gen, STREAM_RECIPES[0]);
   }
 
@@ -2223,6 +2471,8 @@
       !msg ||
       msg.indexOf("Connecting") === 0 ||
       msg.indexOf("Downloading") === 0 ||
+      msg.indexOf("Buffering") === 0 ||
+      msg.indexOf("Starting") === 0 ||
       msg.indexOf("Format failed") === 0 ||
       msg.indexOf("Setup failed") === 0 ||
       msg === "Buffering…" ||
