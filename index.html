@@ -601,7 +601,7 @@
         </div>
       </div>
       <div class="playback-error" id="playbackError" aria-live="polite"></div>
-      <div class="hint" id="npHint">↑ Shuffle/Loop &nbsp;·&nbsp; ↓ Library &nbsp;·&nbsp; ← → Skip &nbsp;·&nbsp; ⏎ Play/Pause</div>
+      <div class="hint" id="npHint">↓ Shuffle/Loop &nbsp;·&nbsp; ↓↓ Library &nbsp;·&nbsp; ← → Skip &nbsp;·&nbsp; ⏎ Play/Pause</div>
     </section>
 
     <!-- LIBRARY SCREEN -->
@@ -1663,13 +1663,13 @@
     elLoopIcon.innerHTML = loopMode === "one" ? LOOP_ICON_ONE : LOOP_ICON_ALL;
     if (npFocus) {
       elNpHint.textContent =
-        "← → Select  ·  ⏎ Toggle  ·  ↓ Back  ·  Shuffle" +
+        "← → Select  ·  ⏎ Toggle  ·  ↓ Library  ·  ↑ Back  ·  Shuffle" +
         (shuffleOn ? " On" : " Off") +
         "  ·  Loop " +
         (loopMode === "off" ? "Off" : loopMode === "all" ? "All" : "One");
-    } else {
+    } else if (!playbackNeedsRetry) {
       elNpHint.textContent =
-        "↑ Shuffle/Loop  ·  ↓ Library  ·  ← → Skip  ·  ⏎ Play/Pause";
+        "↓ Shuffle/Loop  ·  ↓↓ Library  ·  ← → Skip  ·  ⏎ Play/Pause";
     }
   }
 
@@ -1856,11 +1856,15 @@
   }
 
   function updateNpHint() {
+    if (npFocus) {
+      renderModeButtons();
+      return;
+    }
     if (playbackNeedsRetry) {
-      elNpHint.textContent = "⏎ Retry  ·  ↓ Library  ·  ← → Skip";
+      elNpHint.textContent = "⏎ Retry  ·  ↓ Shuffle/Loop  ·  ↓↓ Library  ·  ← → Skip";
     } else {
       elNpHint.textContent =
-        "↑ Shuffle/Loop  ·  ↓ Library  ·  ← → Skip  ·  ⏎ Play/Pause";
+        "↓ Shuffle/Loop  ·  ↓↓ Library  ·  ← → Skip  ·  ⏎ Play/Pause";
     }
   }
 
@@ -2417,6 +2421,9 @@
       if (npFocus) {
         if (key === "ArrowDown") {
           npFocus = null;
+          goScreen("library");
+        } else if (key === "ArrowUp") {
+          npFocus = null;
           renderModeButtons();
         } else if (key === "ArrowLeft" || key === "ArrowRight") {
           npFocus = npFocus === "shuffle" ? "loop" : "shuffle";
@@ -2428,8 +2435,7 @@
         e.preventDefault();
         return;
       }
-      if (key === "ArrowDown") goScreen("library");
-      else if (key === "ArrowUp") {
+      if (key === "ArrowDown") {
         npFocus = "shuffle";
         renderModeButtons();
       } else if (key === "ArrowLeft") prevTrack();
